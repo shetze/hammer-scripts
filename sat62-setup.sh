@@ -403,6 +403,7 @@ if [ $STAGE -le 3 ]; then
         df -h
     fi
     if [ $CUST_CONTENT = 'true' ]; then
+        echo '85.25.159.110 sol.lunetix.org' >>/etc/hosts
         hammer product create --name="$ORG" --organization "$ORG"
         hammer repository create  --organization "$ORG" --name='Puppet Modules' --product="$ORG" --content-type='puppet' --publish-via-http=true --url=http://sol.lunetix.org/repos/puppet-modules/
         time hammer repository synchronize --organization "$ORG" --product="$ORG"  --name='Puppet Modules' 2>/dev/null
