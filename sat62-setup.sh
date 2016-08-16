@@ -428,31 +428,31 @@ fi
 
 # BEGIN environment setup
 if [ $STAGE -le 4 ]; then
-hammer lifecycle-environment create --organization "$ORG" --description 'Development' --name 'Development' --label development --prior Library
-hammer lifecycle-environment create --organization "$ORG" --description 'Test' --name 'Test' --label test --prior 'Development'
-hammer lifecycle-environment create --organization "$ORG" --description 'Production' --name 'Production' --label production --prior 'Test'
+    hammer lifecycle-environment create --organization "$ORG" --description 'Development' --name 'Development' --label development --prior Library
+    hammer lifecycle-environment create --organization "$ORG" --description 'Test' --name 'Test' --label test --prior 'Development'
+    hammer lifecycle-environment create --organization "$ORG" --description 'Production' --name 'Production' --label production --prior 'Test'
 
 
-hammer compute-resource create --organizations "$ORG" --name "$COMPUTE_RES_NAME" --locations "$LOC" --provider Libvirt --url qemu+ssh://root@${COMPUTE_RES_FQDN}/system --set-console-password false
+    hammer compute-resource create --organizations "$ORG" --name "$COMPUTE_RES_NAME" --locations "$LOC" --provider Libvirt --url qemu+ssh://root@${COMPUTE_RES_FQDN}/system --set-console-password false
 
-hammer domain update --id 1 --organizations "$ORG" --locations "$LOC"
+    hammer domain update --id 1 --organizations "$ORG" --locations "$LOC"
 
-hammer subnet create --name $SUBNET_NAME \
-  --network $SUBNET \
-  --mask $SUBNET_MASK \
-  --gateway $DHCP_GW \
-  --dns-primary $DHCP_DNS \
-  --from $SUBNET_IPAM_BEGIN \
-  --to $SUBNET_IPAM_END \
-  --tftp-id 1 \
-  --dhcp-id 1 \
-  --dns-id 1 \
-  --domain-ids 1 \
-  --organizations "$ORG" \
-  --locations "$LOC"
+    hammer subnet create --name $SUBNET_NAME \
+      --network $SUBNET \
+      --mask $SUBNET_MASK \
+      --gateway $DHCP_GW \
+      --dns-primary $DHCP_DNS \
+      --from $SUBNET_IPAM_BEGIN \
+      --to $SUBNET_IPAM_END \
+      --tftp-id 1 \
+      --dhcp-id 1 \
+      --dns-id 1 \
+      --domain-ids 1 \
+      --organizations "$ORG" \
+      --locations "$LOC"
 
 
-cat >kickstart-docker <<EOF
+    cat >kickstart-docker <<EOF
 <%#
 kind: ptable
 name: Kickstart Docker
@@ -479,150 +479,150 @@ part  pv.01     --asprimary  --size=12000 --grow
 volgroup dockerhost pv.01
 logvol / --vgname=dockerhost --size=9000 --name=rootvol
 EOF
-hammer partition-table create  --file=kickstart-docker --name='Kickstart Docker' --os-family='Redhat' --organizations="$ORG" --locations="$LOC"
+    hammer partition-table create  --file=kickstart-docker --name='Kickstart Docker' --os-family='Redhat' --organizations="$ORG" --locations="$LOC"
 fi
 # END environment setup
 
 # BEGIN content view setup
 if [ $STAGE -le 5 ]; then
-date
-hammer content-view create --organization "$ORG" --name 'RHEL7_Base' --label rhel7_base --description 'Core Build for RHEL 7'
-hammer content-view add-repository --organization "$ORG" --name 'RHEL7_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'RHEL7_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
-hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author puppetlabs --name stdlib
-hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author puppetlabs --name concat
-hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author puppetlabs --name ntp
-hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author saz --name ssh
-time hammer content-view publish --organization "$ORG" --name RHEL7_Base --description 'Initial Publishing' 2>/dev/null
-time hammer content-view version promote --organization "$ORG" --content-view RHEL7_Base --to-lifecycle-environment Development  2>/dev/null
+    date
+    hammer content-view create --organization "$ORG" --name 'RHEL7_Base' --label rhel7_base --description 'Core Build for RHEL 7'
+    hammer content-view add-repository --organization "$ORG" --name 'RHEL7_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'RHEL7_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author puppetlabs --name stdlib
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author puppetlabs --name concat
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author puppetlabs --name ntp
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author saz --name ssh
+    time hammer content-view publish --organization "$ORG" --name RHEL7_Base --description 'Initial Publishing' 2>/dev/null
+    time hammer content-view version promote --organization "$ORG" --content-view RHEL7_Base --to-lifecycle-environment Development  2>/dev/null
 
-hammer content-view create --organization "$ORG" --name 'inf-ipa-rhel7' --label inf-ipa-rhel7 --description ''
-hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
-hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'EPEL' --repository 'EPEL 7 - x86_64'
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author puppetlabs --name stdlib
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author puppetlabs --name concat
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author puppetlabs --name ntp
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author saz --name ssh
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author example42 --name puppi
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author example42 --name monitor
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author netmanagers --name fail2ban
-time hammer content-view publish --organization "$ORG" --name inf-ipa-rhel7 --description 'Initial Publishing' 2>/dev/null
-time hammer content-view version promote --organization "$ORG" --content-view inf-ipa-rhel7 --to-lifecycle-environment Development  2>/dev/null
+    hammer content-view create --organization "$ORG" --name 'inf-ipa-rhel7' --label inf-ipa-rhel7 --description ''
+    hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'EPEL' --repository 'EPEL 7 - x86_64'
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author puppetlabs --name stdlib
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author puppetlabs --name concat
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author puppetlabs --name ntp
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author saz --name ssh
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author example42 --name puppi
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author example42 --name monitor
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author netmanagers --name fail2ban
+    time hammer content-view publish --organization "$ORG" --name inf-ipa-rhel7 --description 'Initial Publishing' 2>/dev/null
+    time hammer content-view version promote --organization "$ORG" --content-view inf-ipa-rhel7 --to-lifecycle-environment Development  2>/dev/null
 
-hammer content-view create --organization "$ORG" --name 'inf-hypervisor-rhel7' --label inf-hypervisor-rhel7 --description ''
-hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
-hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Enterprise Virtualization' --repository 'Red Hat Enterprise Virtualization Management Agents for RHEL 7 RPMs x86_64 7Server'
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-hypervisor-rhel7 --author puppetlabs --name stdlib
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-hypervisor-rhel7 --author puppetlabs --name concat
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-hypervisor-rhel7 --author puppetlabs --name ntp
-time hammer content-view publish --organization "$ORG" --name inf-hypervisor-rhel7 --description 'Initial Publishing' 2>/dev/null
-time hammer content-view version promote --organization "$ORG" --content-view inf-hypervisor-rhel7 --to-lifecycle-environment Development  2>/dev/null
+    hammer content-view create --organization "$ORG" --name 'inf-hypervisor-rhel7' --label inf-hypervisor-rhel7 --description ''
+    hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Enterprise Virtualization' --repository 'Red Hat Enterprise Virtualization Management Agents for RHEL 7 RPMs x86_64 7Server'
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-hypervisor-rhel7 --author puppetlabs --name stdlib
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-hypervisor-rhel7 --author puppetlabs --name concat
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-hypervisor-rhel7 --author puppetlabs --name ntp
+    time hammer content-view publish --organization "$ORG" --name inf-hypervisor-rhel7 --description 'Initial Publishing' 2>/dev/null
+    time hammer content-view version promote --organization "$ORG" --content-view inf-hypervisor-rhel7 --to-lifecycle-environment Development  2>/dev/null
 
-hammer content-view create --organization "$ORG" --name 'inf-builder-rhel7' --label inf-builder-rhel7 --description ''
-hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
-hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Supplementary RPMs x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - RH Common RPMs x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Extras RPMs x86_64'
-hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'JBoss Enterprise Application Platform' --repository 'JBoss Enterprise Application Platform 7 RHEL 7 Server RPMs x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Maven' --repository 'Maven 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'EPEL' --repository 'EPEL 7 - x86_64'
-hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product "$ORG" --repository "Packages"
-hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product "$ORG" --repository "Jenkins"
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name stdlib
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name concat
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name ntp
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author saz --name ssh
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name postgresql
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name java
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author rtyler --name jenkins
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author LunetIX --name git
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author LunetIX --name buildhost
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author camptocamp --name archive
-time hammer content-view publish --organization "$ORG" --name inf-builder-rhel7 --description 'Initial Publishing'
-time hammer content-view version promote --organization "$ORG" --content-view inf-builder-rhel7 --to-lifecycle-environment Development
+    hammer content-view create --organization "$ORG" --name 'inf-builder-rhel7' --label inf-builder-rhel7 --description ''
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Supplementary RPMs x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - RH Common RPMs x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Extras RPMs x86_64'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'JBoss Enterprise Application Platform' --repository 'JBoss Enterprise Application Platform 7 RHEL 7 Server RPMs x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Maven' --repository 'Maven 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'EPEL' --repository 'EPEL 7 - x86_64'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product "$ORG" --repository "Packages"
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product "$ORG" --repository "Jenkins"
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name stdlib
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name concat
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name ntp
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author saz --name ssh
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name postgresql
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name java
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author rtyler --name jenkins
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author LunetIX --name git
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author LunetIX --name buildhost
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author camptocamp --name archive
+    time hammer content-view publish --organization "$ORG" --name inf-builder-rhel7 --description 'Initial Publishing'
+    time hammer content-view version promote --organization "$ORG" --content-view inf-builder-rhel7 --to-lifecycle-environment Development
 
-hammer content-view create --organization "$ORG" --name 'inf-docker-rhel7' --label inf-docker-rhel7 --description ''
-hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
-hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Extras RPMs x86_64'
-hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'JBoss Enterprise Application Platform' --repository 'JBoss Enterprise Application Platform 7 RHEL 7 Server RPMs x86_64 7Server'
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author puppetlabs --name stdlib
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author puppetlabs --name concat
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author puppetlabs --name ntp
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author saz --name ssh
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author cristifalcas --name kubernetes
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author cristifalcas --name etcd
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author cristifalcas --name docker
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author crayfishx --name firewalld
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author LunetIX --name dockerhost
-time hammer content-view publish --organization "$ORG" --name inf-docker-rhel7 --description 'Initial Publishing'
-time hammer content-view version promote --organization "$ORG" --content-view inf-docker-rhel7 --to-lifecycle-environment Development
+    hammer content-view create --organization "$ORG" --name 'inf-docker-rhel7' --label inf-docker-rhel7 --description ''
+    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Extras RPMs x86_64'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'JBoss Enterprise Application Platform' --repository 'JBoss Enterprise Application Platform 7 RHEL 7 Server RPMs x86_64 7Server'
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author puppetlabs --name stdlib
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author puppetlabs --name concat
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author puppetlabs --name ntp
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author saz --name ssh
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author cristifalcas --name kubernetes
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author cristifalcas --name etcd
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author cristifalcas --name docker
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author crayfishx --name firewalld
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author LunetIX --name dockerhost
+    time hammer content-view publish --organization "$ORG" --name inf-docker-rhel7 --description 'Initial Publishing'
+    time hammer content-view version promote --organization "$ORG" --content-view inf-docker-rhel7 --to-lifecycle-environment Development
 
-hammer content-view create --organization "$ORG" --name 'puppet-fasttrack' --label puppet-fasttrack --description 'Puppet only CV for fast module development workflow'
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name stdlib
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name concat
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name ntp
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author saz --name ssh
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name postgresql
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name java
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author rtyler --name jenkins
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author LunetIX --name git
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author LunetIX --name buildhost
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author camptocamp --name archive
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author cristifalcas --name kubernetes
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author cristifalcas --name etcd
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author cristifalcas --name docker
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author crayfishx --name firewalld
-hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author LunetIX --name dockerhost
-time hammer content-view publish --organization "$ORG" --name puppet-fasttrack --description 'Initial Publishing'
-time hammer content-view version promote --organization "$ORG" --content-view puppet-fasttrack --to-lifecycle-environment Development
+    hammer content-view create --organization "$ORG" --name 'puppet-fasttrack' --label puppet-fasttrack --description 'Puppet only CV for fast module development workflow'
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name stdlib
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name concat
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name ntp
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author saz --name ssh
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name postgresql
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name java
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author rtyler --name jenkins
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author LunetIX --name git
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author LunetIX --name buildhost
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author camptocamp --name archive
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author cristifalcas --name kubernetes
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author cristifalcas --name etcd
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author cristifalcas --name docker
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author crayfishx --name firewalld
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author LunetIX --name dockerhost
+    time hammer content-view publish --organization "$ORG" --name puppet-fasttrack --description 'Initial Publishing'
+    time hammer content-view version promote --organization "$ORG" --content-view puppet-fasttrack --to-lifecycle-environment Development
 
-hammer content-view create --organization "$ORG" --name 'inf-git-rhel7' --label inf-git-rhel7 --description ''
-hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
-hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'EPEL' --repository 'EPEL 7 - x86_64'
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name stdlib
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name concat
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name ntp
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author saz --name ssh
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author LunetIX --name git
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author example42 --name puppi
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author example42 --name monitor
-hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author netmanagers --name fail2ban
-time hammer content-view publish --organization "$ORG" --name inf-git-rhel7 --description 'Initial Publishing'
-time hammer content-view version promote --organization "$ORG" --content-view inf-git-rhel7 --to-lifecycle-environment Development
+    hammer content-view create --organization "$ORG" --name 'inf-git-rhel7' --label inf-git-rhel7 --description ''
+    hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'EPEL' --repository 'EPEL 7 - x86_64'
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name stdlib
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name concat
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name ntp
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author saz --name ssh
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author LunetIX --name git
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author example42 --name puppi
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author example42 --name monitor
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author netmanagers --name fail2ban
+    time hammer content-view publish --organization "$ORG" --name inf-git-rhel7 --description 'Initial Publishing'
+    time hammer content-view version promote --organization "$ORG" --content-view inf-git-rhel7 --to-lifecycle-environment Development
 
-if [ $RHEL6_CONTENT = 'true' ]; then
-    hammer content-view create --organization "$ORG" --name 'RHEL6_Base' --label rhel6_base --description 'Core Build for RHEL 6'
-    hammer content-view add-repository --organization "$ORG" --name 'RHEL6_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 6 Server RPMs x86_64 6Server'
-    hammer content-view add-repository --organization "$ORG" --name 'RHEL6_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 6 Server RPMs x86_64'
-    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author puppetlabs --name stdlib
-    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author puppetlabs --name concat
-    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author puppetlabs --name ntp
-    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author saz --name ssh
-    time hammer content-view publish --organization "$ORG" --name RHEL6_Base --description 'Initial Publishing' 2>/dev/null
-    time hammer content-view version promote --organization "$ORG" --content-view RHEL6_Base --to-lifecycle-environment Development  2>/dev/null
-fi
+    if [ $RHEL6_CONTENT = 'true' ]; then
+        hammer content-view create --organization "$ORG" --name 'RHEL6_Base' --label rhel6_base --description 'Core Build for RHEL 6'
+        hammer content-view add-repository --organization "$ORG" --name 'RHEL6_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 6 Server RPMs x86_64 6Server'
+        hammer content-view add-repository --organization "$ORG" --name 'RHEL6_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 6 Server RPMs x86_64'
+        hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author puppetlabs --name stdlib
+        hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author puppetlabs --name concat
+        hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author puppetlabs --name ntp
+        hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author saz --name ssh
+        time hammer content-view publish --organization "$ORG" --name RHEL6_Base --description 'Initial Publishing' 2>/dev/null
+        time hammer content-view version promote --organization "$ORG" --content-view RHEL6_Base --to-lifecycle-environment Development  2>/dev/null
+    fi
 
 
-# hammer content-view create --organization "$ORG" --name 'CV' --label CV --description ''
-# hammer content-view add-repository --organization "$ORG" --name 'CV' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-# hammer content-view add-repository --organization "$ORG" --name 'CV' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
-# hammer content-view puppet-module add --organization "$ORG" --content-view CV --author puppetlabs --name stdlib
-# hammer content-view puppet-module add --organization "$ORG" --content-view CV --author puppetlabs --name concat
-# hammer content-view puppet-module add --organization "$ORG" --content-view CV --author puppetlabs --name ntp
-# hammer content-view puppet-module add --organization "$ORG" --content-view CV --author saz --name ssh
-# time hammer content-view publish --organization "$ORG" --name CV --description 'Initial Publishing' 2>/dev/null
-# time hammer content-view version promote --organization "$ORG" --content-view CV --to-lifecycle-environment Development  2>/dev/null
-
+    # hammer content-view create --organization "$ORG" --name 'CV' --label CV --description ''
+    # hammer content-view add-repository --organization "$ORG" --name 'CV' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
+    # hammer content-view add-repository --organization "$ORG" --name 'CV' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
+    # hammer content-view puppet-module add --organization "$ORG" --content-view CV --author puppetlabs --name stdlib
+    # hammer content-view puppet-module add --organization "$ORG" --content-view CV --author puppetlabs --name concat
+    # hammer content-view puppet-module add --organization "$ORG" --content-view CV --author puppetlabs --name ntp
+    # hammer content-view puppet-module add --organization "$ORG" --content-view CV --author saz --name ssh
+    # time hammer content-view publish --organization "$ORG" --name CV --description 'Initial Publishing' 2>/dev/null
+    # time hammer content-view version promote --organization "$ORG" --content-view CV --to-lifecycle-environment Development  2>/dev/null
+    
 # This is ridiculous, but it appears that Satellite-6 requires a restart and reindex after having done all that work in one go.
 # katello-service restart
 # foreman-rake katello:reindex
@@ -639,136 +639,136 @@ RHEL_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --sear
 
 # BEGIN activation key and hostgroup setup
 if [ $STAGE -le 6 ]; then
-hammer activation-key create --organization="$ORG" --name='RHEL7_Base' --unlimited-hosts --lifecycle-environment='Development' --content-view='RHEL7_Base'
-hammer activation-key add-subscription --organization="$ORG" --name='RHEL7_Base' --subscription-id="$PuppetForge_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='RHEL7_Base' --subscription-id="$RHEL_Sub_ID" 
-hammer activation-key content-override --organization="$ORG" --name='RHEL7_Base' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
-hammer activation-key update --organization="$ORG" --name='RHEL7_Base' --release-version='7Server' --service-level='Standard' --auto-attach=0
-hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
-  --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
-  --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-  --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
-  --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
-  --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='RHEL7_Base' \
-  --environment='KT_LunetIX_development_rhel7_base_2' --name='RHEL7_Base'
-hammer hostgroup set-parameter --hostgroup='RHEL7_Base' --name='kt_activation_keys' --value='RHEL7_Base'
-
-hammer activation-key create --organization="$ORG" --name='inf-builder-rhel7' --unlimited-hosts --lifecycle-environment='Development' --content-view='inf-builder-rhel7'
-hammer activation-key add-subscription --organization="$ORG" --name='inf-builder-rhel7' --subscription-id="$PuppetForge_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-builder-rhel7' --subscription-id="$RHEL_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-builder-rhel7' --subscription-id="$ORG_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-builder-rhel7' --subscription-id="$EPEL_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-builder-rhel7' --subscription-id="$Maven_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-builder-rhel7' --subscription-id="$JBoss_Sub_ID" 
-hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='rhel-7-server-optional-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='rhel-7-server-supplementary-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='rhel-7-server-rh-common-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='jb-eap-7-for-rhel-7-server-rpms' --value=1
-hammer activation-key update --organization="$ORG" --name='inf-builder-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
-environment=$(hammer --output=csv environment list --search='development_inf_builder_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
-hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
-  --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
-  --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-  --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
-  --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
-  --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,buildhost'  --content-view='inf-builder-rhel7' \
-  --environment="$environment" --name='inf-builder-rhel7'
-hammer hostgroup set-parameter --hostgroup='inf-builder-rhel7' --name='kt_activation_keys' --value='inf-builder-rhel7'
-
-hammer activation-key create --organization="$ORG" --name='inf-hypervisor-rhel7' --unlimited-hosts --lifecycle-environment='Development' --content-view='inf-hypervisor-rhel7'
-hammer activation-key add-subscription --organization="$ORG" --name='inf-hypervisor-rhel7' --subscription-id="$PuppetForge_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-hypervisor-rhel7' --subscription-id="$RHEV_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-hypervisor-rhel7' --subscription-id="$RHEL_Sub_ID" 
-hammer activation-key content-override --organization="$ORG" --name='inf-hypervisor-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-hypervisor-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-hypervisor-rhel7' --content-label='rhel-7-server-rhev-mgmt-agent-rpms' --value=1
-hammer activation-key update --organization="$ORG" --name='inf-hypervisor-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
-environment=$(hammer --output=csv environment list --search='development_inf_hypervisor_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
-hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
-  --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
-  --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-  --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
-  --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
-  --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='inf-hypervisor-rhel7' \
-  --environment="$environment" --name='inf-hypervisor-rhel7'
-hammer hostgroup set-parameter --hostgroup='inf-hypervisor-rhel7' --name='kt_activation_keys' --value='inf-hypervisor-rhel7'
-
-hammer activation-key create --organization="$ORG" --name='inf-git-rhel7' --unlimited-hosts --lifecycle-environment='Development' --content-view='inf-git-rhel7'
-hammer activation-key add-subscription --organization="$ORG" --name='inf-git-rhel7' --subscription-id="$PuppetForge_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-git-rhel7' --subscription-id="$RHEL_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-git-rhel7' --subscription-id="$ORG_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-git-rhel7' --subscription-id="$EPEL_Sub_ID" 
-hammer activation-key content-override --organization="$ORG" --name='inf-git-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-git-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
-hammer activation-key update --organization="$ORG" --name='inf-git-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
-environment=$(hammer --output=csv environment list --search='development_inf_git_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
-hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
-  --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
-  --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-  --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
-  --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
-  --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,git::server'  --content-view='inf-git-rhel7' \
-  --environment="$environment" --name='inf-git-rhel7'
-hammer hostgroup set-parameter --hostgroup='inf-git-rhel7' --name='kt_activation_keys' --value='inf-git-rhel7'
-
-hammer activation-key create --organization="$ORG" --name='inf-docker-rhel7' --unlimited-hosts --lifecycle-environment='Development' --content-view='inf-docker-rhel7'
-hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$PuppetForge_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$RHEL_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$ORG_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$EPEL_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$JBoss_Sub_ID" 
-hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-optional-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-supplementary-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-rh-common-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='jb-eap-7-for-rhel-7-server-rpms' --value=1
-hammer activation-key update --organization="$ORG" --name='inf-docker-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
-environment=$(hammer --output=csv environment list --search='development_inf_docker_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
-hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
-  --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
-  --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-  --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
-  --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
-  --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,dockerhost'  --content-view='inf-docker-rhel7' \
-  --environment="$environment" --name='inf-docker-rhel7'
-hammer hostgroup set-parameter --hostgroup='inf-docker-rhel7' --name='kt_activation_keys' --value='inf-docker-rhel7'
-
-hammer activation-key create --organization="$ORG" --name='inf-ipa-rhel7' --unlimited-hosts --lifecycle-environment='Development' --content-view='inf-ipa-rhel7'
-hammer activation-key add-subscription --organization="$ORG" --name='inf-ipa-rhel7' --subscription-id="$PuppetForge_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-ipa-rhel7' --subscription-id="$RHEL_Sub_ID" 
-hammer activation-key add-subscription --organization="$ORG" --name='inf-ipa-rhel7' --subscription-id="$EPEL_Sub_ID" 
-hammer activation-key content-override --organization="$ORG" --name='inf-ipa-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
-hammer activation-key content-override --organization="$ORG" --name='inf-ipa-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
-hammer activation-key update --organization="$ORG" --name='inf-ipa-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
-environment=$(hammer --output=csv environment list --search='development_inf_ipa_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
-hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
-  --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
-  --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-  --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
-  --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
-  --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='inf-ipa-rhel7' \
-  --environment="$environment" --name='inf-ipa-rhel7'
-hammer hostgroup set-parameter --hostgroup='inf-ipa-rhel7' --name='kt_activation_keys' --value='inf-ipa-rhel7'
-
-if [ $RHEL6_CONTENT = 'true' ]; then
-    hammer activation-key create --organization="$ORG" --name='RHEL6_Base' --unlimited-hosts --lifecycle-environment='Development' --content-view='RHEL6_Base'
-    hammer activation-key add-subscription --organization="$ORG" --name='RHEL6_Base' --subscription-id="$PuppetForge_Sub_ID" 
-    hammer activation-key add-subscription --organization="$ORG" --name='RHEL6_Base' --subscription-id="$RHEL_Sub_ID" 
-    hammer activation-key content-override --organization="$ORG" --name='RHEL6_Base' --content-label='rhel-6-server-satellite-tools-6.2-rpms' --value=1
-    hammer activation-key update --organization="$ORG" --name='RHEL6_Base' --release-version='6Server' --service-level='Standard' --auto-attach=0
-    environment=$(hammer --output=csv environment list --search='development_rhel6_base' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
+    hammer activation-key create --organization="$ORG" --name='RHEL7_Base' --unlimited-hosts --lifecycle-environment='Development' --content-view='RHEL7_Base'
+    hammer activation-key add-subscription --organization="$ORG" --name='RHEL7_Base' --subscription-id="$PuppetForge_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='RHEL7_Base' --subscription-id="$RHEL_Sub_ID" 
+    hammer activation-key content-override --organization="$ORG" --name='RHEL7_Base' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
+    hammer activation-key update --organization="$ORG" --name='RHEL7_Base' --release-version='7Server' --service-level='Standard' --auto-attach=0
     hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_6_Server_Kickstart_x86_64_6_8' \
-      --lifecycle-environment='Development' --operatingsystem='RedHat 6.8' --partition-table='Kickstart default' \
-      --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='RHEL6_Base' \
-      --environment="$environment" --name='RHEL6_Base'
-    hammer hostgroup set-parameter --hostgroup='RHEL6_Base' --name='kt_activation_keys' --value='RHEL6_Base'
-fi
+      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
+      --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
+      --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='RHEL7_Base' \
+      --environment='KT_LunetIX_development_rhel7_base_2' --name='RHEL7_Base'
+    hammer hostgroup set-parameter --hostgroup='RHEL7_Base' --name='kt_activation_keys' --value='RHEL7_Base'
+
+    hammer activation-key create --organization="$ORG" --name='inf-builder-rhel7' --unlimited-hosts --lifecycle-environment='Development' --content-view='inf-builder-rhel7'
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-builder-rhel7' --subscription-id="$PuppetForge_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-builder-rhel7' --subscription-id="$RHEL_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-builder-rhel7' --subscription-id="$ORG_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-builder-rhel7' --subscription-id="$EPEL_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-builder-rhel7' --subscription-id="$Maven_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-builder-rhel7' --subscription-id="$JBoss_Sub_ID" 
+    hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='rhel-7-server-optional-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='rhel-7-server-supplementary-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='rhel-7-server-rh-common-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='jb-eap-7-for-rhel-7-server-rpms' --value=1
+    hammer activation-key update --organization="$ORG" --name='inf-builder-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
+    environment=$(hammer --output=csv environment list --search='development_inf_builder_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
+    hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
+      --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
+      --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
+      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
+      --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
+      --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,buildhost'  --content-view='inf-builder-rhel7' \
+      --environment="$environment" --name='inf-builder-rhel7'
+    hammer hostgroup set-parameter --hostgroup='inf-builder-rhel7' --name='kt_activation_keys' --value='inf-builder-rhel7'
+
+    hammer activation-key create --organization="$ORG" --name='inf-hypervisor-rhel7' --unlimited-hosts --lifecycle-environment='Development' --content-view='inf-hypervisor-rhel7'
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-hypervisor-rhel7' --subscription-id="$PuppetForge_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-hypervisor-rhel7' --subscription-id="$RHEV_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-hypervisor-rhel7' --subscription-id="$RHEL_Sub_ID" 
+    hammer activation-key content-override --organization="$ORG" --name='inf-hypervisor-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-hypervisor-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-hypervisor-rhel7' --content-label='rhel-7-server-rhev-mgmt-agent-rpms' --value=1
+    hammer activation-key update --organization="$ORG" --name='inf-hypervisor-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
+    environment=$(hammer --output=csv environment list --search='development_inf_hypervisor_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
+    hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
+      --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
+      --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
+      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
+      --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
+      --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='inf-hypervisor-rhel7' \
+      --environment="$environment" --name='inf-hypervisor-rhel7'
+    hammer hostgroup set-parameter --hostgroup='inf-hypervisor-rhel7' --name='kt_activation_keys' --value='inf-hypervisor-rhel7'
+
+    hammer activation-key create --organization="$ORG" --name='inf-git-rhel7' --unlimited-hosts --lifecycle-environment='Development' --content-view='inf-git-rhel7'
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-git-rhel7' --subscription-id="$PuppetForge_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-git-rhel7' --subscription-id="$RHEL_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-git-rhel7' --subscription-id="$ORG_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-git-rhel7' --subscription-id="$EPEL_Sub_ID" 
+    hammer activation-key content-override --organization="$ORG" --name='inf-git-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-git-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
+    hammer activation-key update --organization="$ORG" --name='inf-git-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
+    environment=$(hammer --output=csv environment list --search='development_inf_git_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
+    hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
+      --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
+      --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
+      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
+      --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
+      --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,git::server'  --content-view='inf-git-rhel7' \
+      --environment="$environment" --name='inf-git-rhel7'
+    hammer hostgroup set-parameter --hostgroup='inf-git-rhel7' --name='kt_activation_keys' --value='inf-git-rhel7'
+
+    hammer activation-key create --organization="$ORG" --name='inf-docker-rhel7' --unlimited-hosts --lifecycle-environment='Development' --content-view='inf-docker-rhel7'
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$PuppetForge_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$RHEL_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$ORG_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$EPEL_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$JBoss_Sub_ID" 
+    hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-optional-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-supplementary-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-rh-common-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='jb-eap-7-for-rhel-7-server-rpms' --value=1
+    hammer activation-key update --organization="$ORG" --name='inf-docker-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
+    environment=$(hammer --output=csv environment list --search='development_inf_docker_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
+    hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
+      --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
+      --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
+      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
+      --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
+      --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,dockerhost'  --content-view='inf-docker-rhel7' \
+      --environment="$environment" --name='inf-docker-rhel7'
+    hammer hostgroup set-parameter --hostgroup='inf-docker-rhel7' --name='kt_activation_keys' --value='inf-docker-rhel7'
+
+    hammer activation-key create --organization="$ORG" --name='inf-ipa-rhel7' --unlimited-hosts --lifecycle-environment='Development' --content-view='inf-ipa-rhel7'
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-ipa-rhel7' --subscription-id="$PuppetForge_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-ipa-rhel7' --subscription-id="$RHEL_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-ipa-rhel7' --subscription-id="$EPEL_Sub_ID" 
+    hammer activation-key content-override --organization="$ORG" --name='inf-ipa-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-ipa-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
+    hammer activation-key update --organization="$ORG" --name='inf-ipa-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
+    environment=$(hammer --output=csv environment list --search='development_inf_ipa_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
+    hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
+      --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
+      --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
+      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
+      --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
+      --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='inf-ipa-rhel7' \
+      --environment="$environment" --name='inf-ipa-rhel7'
+    hammer hostgroup set-parameter --hostgroup='inf-ipa-rhel7' --name='kt_activation_keys' --value='inf-ipa-rhel7'
+
+    if [ $RHEL6_CONTENT = 'true' ]; then
+        hammer activation-key create --organization="$ORG" --name='RHEL6_Base' --unlimited-hosts --lifecycle-environment='Development' --content-view='RHEL6_Base'
+        hammer activation-key add-subscription --organization="$ORG" --name='RHEL6_Base' --subscription-id="$PuppetForge_Sub_ID" 
+        hammer activation-key add-subscription --organization="$ORG" --name='RHEL6_Base' --subscription-id="$RHEL_Sub_ID" 
+        hammer activation-key content-override --organization="$ORG" --name='RHEL6_Base' --content-label='rhel-6-server-satellite-tools-6.2-rpms' --value=1
+        hammer activation-key update --organization="$ORG" --name='RHEL6_Base' --release-version='6Server' --service-level='Standard' --auto-attach=0
+        environment=$(hammer --output=csv environment list --search='development_rhel6_base' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
+        hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
+          --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
+          --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
+          --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_6_Server_Kickstart_x86_64_6_8' \
+          --lifecycle-environment='Development' --operatingsystem='RedHat 6.8' --partition-table='Kickstart default' \
+          --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='RHEL6_Base' \
+          --environment="$environment" --name='RHEL6_Base'
+        hammer hostgroup set-parameter --hostgroup='RHEL6_Base' --name='kt_activation_keys' --value='RHEL6_Base'
+    fi
 fi
 # END activation key and hostgroup setup
 
