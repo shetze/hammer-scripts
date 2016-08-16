@@ -67,7 +67,7 @@ export MANIFEST=Satellite_61_Generated_27_Jul_2016.zip
 # 4 = environment setup
 # 5 = content views
 # xx host groups, activation keys, sc_params, hosts
-export STAGE=4
+export STAGE=1
 
 # This demo setup is built with IPA integration as one important feature to show.
 # While it is possible to use IPA and leave Satellite with the self signed internal CA cert,
@@ -125,7 +125,7 @@ export COMPUTE_RES_FQDN="puck1054.server4you.de"
 
 # FIRST_SATELLITE matters only if you want to have more than one Sat work with the same IPA REALM infrastructure.
 # If this is the case, you need to make sure to set this to false for all subsequent Satellite instances.
-export FIRST_SATELLITE=true
+export FIRST_SATELLITE=false
 
 
 # This is the end of the header section.
@@ -141,6 +141,7 @@ if [ $STAGE -le 1 ]; then
     subscription-manager repos --disable "*"
     subscription-manager repos --enable=rhel-7-server-rpms \
         --enable=rhel-server-rhscl-7-rpms \
+        --enable=rhel-7-server-optional-rpms \
         --enable=rhel-7-server-satellite-6.2-rpms
     rpm -Uvh https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
     yum-config-manager --disable epel
@@ -150,11 +151,12 @@ if [ $STAGE -le 1 ]; then
 
     yum install -y ipa-client ipa-admintools
     ipa-client-install
+    kinit admin@${REALM}
+    ipa service-add HTTP/$(hostname)
     if [ $IPA_EXT_CERT = 'true' ]; then
         mkdir -p /root/certs
         openssl genrsa -out /root/certs/key.pem 2048
         openssl req -new -key /root/certs/key.pem -out /root/certs/${longname}.csr
-        kinit admin@${REALM}
         serial=$(ipa cert-request --add --principal=host/$(hostname) /root/certs/${longname}.csr|grep number:|cut -d' ' -f5)
         ipa cert-show --out /root/certs/${longname}.pem $serial
     fi
@@ -165,11 +167,11 @@ fi
 if [ $STAGE -le 2 ]; then
     yum -y install satellite foreman-proxy
 
-    firewall-cmd --permanent --add-service=RH-Satellite-6
-    # TFTP
-    firewall-cmd --permanent --add-port="69/udp"
+    firewall-cmd --permanent --add-service='RH-Satellite-6' --add-service='dns' --add-service='dhcp' --add-service='tftp' --add-service='http' --add-service='https'
+    # goferd
+    firewall-cmd --permanent --add-port='5674/tcp'
     # VNC
-    firewall-cmd --permanent --add-port=5901-5930/tcp
+    firewall-cmd --permanent --add-port='5901-5930/tcp'
     firewall-cmd --reload
 
     mkdir -p /usr/share/foreman/.ssh
@@ -181,8 +183,9 @@ if [ $STAGE -le 2 ]; then
     cat > /root/.hammer/cli_config.yml <<EOF
 :foreman:
     :host: 'https://$(hostname)/'
-    :username: 'admin'
+    :username: '$ADMIN'
     :password: '$ADMIN_PASSWORD'
+    :request_timeout: -1
 EOF
 
     if [ $IPA_EXT_CERT = 'true' ]; then
@@ -212,7 +215,7 @@ EOF
             Hit Enter after the freeipa.keytab has been copied." answer
 
     fi
-    mv /root/freeipa.keytab /etc/foreman-proxy
+    cp /root/freeipa.keytab /etc/foreman-proxy
     chown foreman-proxy:foreman-proxy /etc/foreman-proxy/freeipa.keytab
     cp /etc/ipa/ca.crt /etc/pki/ca-trust/source/anchors/ipa.crt
     update-ca-trust enable
@@ -307,10 +310,6 @@ if [ $STAGE -le 3 ]; then
         date
         df -h
     fi
-fi
-        date
-        df -h
-# Temporary End
 
     if [ $OPT_CONTENT = 'true' ]; then
         hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --name 'Red Hat Enterprise Linux 7 Server - Extras (RPMs)'    
@@ -424,7 +423,7 @@ fi
         date
         df -h
     fi
-# fi
+fi
 # END content sync
 
 # BEGIN environment setup
@@ -434,7 +433,7 @@ hammer lifecycle-environment create --organization "$ORG" --description 'Test' -
 hammer lifecycle-environment create --organization "$ORG" --description 'Production' --name 'Production' --label production --prior 'Test'
 
 
-hammer compute-resource create --organizations "$ORG" --name "$COMPUTE_RES_NAME" --locations "$LOC" --provider Libvirt --url qemu+ssh://root@${$COMPUTE_RES_FQDN}/system --set-console-password false
+hammer compute-resource create --organizations "$ORG" --name "$COMPUTE_RES_NAME" --locations "$LOC" --provider Libvirt --url qemu+ssh://root@${COMPUTE_RES_FQDN}/system --set-console-password false
 
 hammer domain update --id 1 --organizations "$ORG" --locations "$LOC"
 
@@ -515,7 +514,7 @@ time hammer content-view version promote --organization "$ORG" --content-view in
 hammer content-view create --organization "$ORG" --name 'inf-hypervisor-rhel7' --label inf-hypervisor-rhel7 --description ''
 hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
 hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
-hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Enterprise Virtualization' --repository 'Red Hat Enterprise Virtualization Hypervisor 7 RPMs x86_64 7Server'
+hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Enterprise Virtualization' --repository 'Red Hat Enterprise Virtualization Management Agents for RHEL 7 RPMs x86_64 7Server'
 hammer content-view puppet-module add --organization "$ORG" --content-view inf-hypervisor-rhel7 --author puppetlabs --name stdlib
 hammer content-view puppet-module add --organization "$ORG" --content-view inf-hypervisor-rhel7 --author puppetlabs --name concat
 hammer content-view puppet-module add --organization "$ORG" --content-view inf-hypervisor-rhel7 --author puppetlabs --name ntp
@@ -545,7 +544,7 @@ hammer content-view puppet-module add --organization "$ORG" --content-view inf-b
 hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author LunetIX --name git
 hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author LunetIX --name buildhost
 hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author camptocamp --name archive
-time hammer content-view publish --organization "$ORG" --name inf-builder-rhel7 --description 'Initial Publishing' 2>/dev/null
+time hammer content-view publish --organization "$ORG" --name inf-builder-rhel7 --description 'Initial Publishing'
 time hammer content-view version promote --organization "$ORG" --content-view inf-builder-rhel7 --to-lifecycle-environment Development
 
 hammer content-view create --organization "$ORG" --name 'inf-docker-rhel7' --label inf-docker-rhel7 --description ''
@@ -565,7 +564,7 @@ hammer content-view puppet-module add --organization "$ORG" --content-view inf-d
 hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author crayfishx --name firewalld
 hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author LunetIX --name dockerhost
 time hammer content-view publish --organization "$ORG" --name inf-docker-rhel7 --description 'Initial Publishing'
-time hammer content-view version promote --organization "$ORG" --content-view inf-docker-rhel7 --to-lifecycle-environment Development --async
+time hammer content-view version promote --organization "$ORG" --content-view inf-docker-rhel7 --to-lifecycle-environment Development
 
 hammer content-view create --organization "$ORG" --name 'puppet-fasttrack' --label puppet-fasttrack --description 'Puppet only CV for fast module development workflow'
 hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name stdlib
@@ -613,6 +612,7 @@ if [ $RHEL6_CONTENT = 'true' ]; then
     time hammer content-view version promote --organization "$ORG" --content-view RHEL6_Base --to-lifecycle-environment Development  2>/dev/null
 fi
 
+
 # hammer content-view create --organization "$ORG" --name 'CV' --label CV --description ''
 # hammer content-view add-repository --organization "$ORG" --name 'CV' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
 # hammer content-view add-repository --organization "$ORG" --name 'CV' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
@@ -623,6 +623,9 @@ fi
 # time hammer content-view publish --organization "$ORG" --name CV --description 'Initial Publishing' 2>/dev/null
 # time hammer content-view version promote --organization "$ORG" --content-view CV --to-lifecycle-environment Development  2>/dev/null
 
+# This is ridiculous, but it appears that Satellite-6 requires a restart and reindex after having done all that work in one go.
+# katello-service restart
+# foreman-rake katello:reindex
 fi
 # END content view setup
 
@@ -634,6 +637,8 @@ JBoss_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --sea
 RHEV_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat Enterprise Virtualization (2-sockets), Standard' | tail -n+2 | head -n1 | cut -d',' -f1)
 RHEL_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat Enterprise Linux Server with Smart Management, Standard (Physical or Virtual Nodes)' | grep -v 'ATOM\|Resilient\|Hyperscale' | tail -n+2 | head -n1 | cut -d',' -f1)
 
+# BEGIN activation key and hostgroup setup
+if [ $STAGE -le 6 ]; then
 hammer activation-key create --organization="$ORG" --name='RHEL7_Base' --unlimited-hosts --lifecycle-environment='Development' --content-view='RHEL7_Base'
 hammer activation-key add-subscription --organization="$ORG" --name='RHEL7_Base' --subscription-id="$PuppetForge_Sub_ID" 
 hammer activation-key add-subscription --organization="$ORG" --name='RHEL7_Base' --subscription-id="$RHEL_Sub_ID" 
@@ -662,7 +667,7 @@ hammer activation-key content-override --organization="$ORG" --name='inf-builder
 hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='rhel-7-server-rh-common-rpms' --value=1
 hammer activation-key content-override --organization="$ORG" --name='inf-builder-rhel7' --content-label='jb-eap-7-for-rhel-7-server-rpms' --value=1
 hammer activation-key update --organization="$ORG" --name='inf-builder-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
-environment=$(hammer --output=csv environment list --search='development_inf_builder_rhel7' | tail -n+2 | head -n1 | cut -d',' -f2)
+environment=$(hammer --output=csv environment list --search='development_inf_builder_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
 hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
   --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
   --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
@@ -680,7 +685,7 @@ hammer activation-key content-override --organization="$ORG" --name='inf-hypervi
 hammer activation-key content-override --organization="$ORG" --name='inf-hypervisor-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
 hammer activation-key content-override --organization="$ORG" --name='inf-hypervisor-rhel7' --content-label='rhel-7-server-rhev-mgmt-agent-rpms' --value=1
 hammer activation-key update --organization="$ORG" --name='inf-hypervisor-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
-environment=$(hammer --output=csv environment list --search='development_inf_hypervisor_rhel7' | tail -n+2 | head -n1 | cut -d',' -f2)
+environment=$(hammer --output=csv environment list --search='development_inf_hypervisor_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
 hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
   --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
   --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
@@ -698,7 +703,7 @@ hammer activation-key add-subscription --organization="$ORG" --name='inf-git-rhe
 hammer activation-key content-override --organization="$ORG" --name='inf-git-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
 hammer activation-key content-override --organization="$ORG" --name='inf-git-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
 hammer activation-key update --organization="$ORG" --name='inf-git-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
-environment=$(hammer --output=csv environment list --search='development_inf_git_rhel7' | tail -n+2 | head -n1 | cut -d',' -f2)
+environment=$(hammer --output=csv environment list --search='development_inf_git_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
 hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
   --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
   --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
@@ -721,7 +726,7 @@ hammer activation-key content-override --organization="$ORG" --name='inf-docker-
 hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-rh-common-rpms' --value=1
 hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='jb-eap-7-for-rhel-7-server-rpms' --value=1
 hammer activation-key update --organization="$ORG" --name='inf-docker-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
-environment=$(hammer --output=csv environment list --search='development_inf_docker_rhel7' | tail -n+2 | head -n1 | cut -d',' -f2)
+environment=$(hammer --output=csv environment list --search='development_inf_docker_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
 hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
   --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
   --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
@@ -738,7 +743,7 @@ hammer activation-key add-subscription --organization="$ORG" --name='inf-ipa-rhe
 hammer activation-key content-override --organization="$ORG" --name='inf-ipa-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
 hammer activation-key content-override --organization="$ORG" --name='inf-ipa-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
 hammer activation-key update --organization="$ORG" --name='inf-ipa-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
-environment=$(hammer --output=csv environment list --search='development_inf_ipa_rhel7' | tail -n+2 | head -n1 | cut -d',' -f2)
+environment=$(hammer --output=csv environment list --search='development_inf_ipa_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
 hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
   --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
   --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
@@ -754,7 +759,7 @@ if [ $RHEL6_CONTENT = 'true' ]; then
     hammer activation-key add-subscription --organization="$ORG" --name='RHEL6_Base' --subscription-id="$RHEL_Sub_ID" 
     hammer activation-key content-override --organization="$ORG" --name='RHEL6_Base' --content-label='rhel-6-server-satellite-tools-6.2-rpms' --value=1
     hammer activation-key update --organization="$ORG" --name='RHEL6_Base' --release-version='6Server' --service-level='Standard' --auto-attach=0
-    environment=$(hammer --output=csv environment list --search='development_rhel6_base' | tail -n+2 | head -n1 | cut -d',' -f2)
+    environment=$(hammer --output=csv environment list --search='development_rhel6_base' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
     hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
@@ -764,6 +769,8 @@ if [ $RHEL6_CONTENT = 'true' ]; then
       --environment="$environment" --name='RHEL6_Base'
     hammer hostgroup set-parameter --hostgroup='RHEL6_Base' --name='kt_activation_keys' --value='RHEL6_Base'
 fi
+fi
+# END activation key and hostgroup setup
 
 
 param_id=$(hammer --output=csv sc-param list --puppet-class='ssh::server' --search='options' | tail -n+2 | head -n1 | cut -d',' -f1)
