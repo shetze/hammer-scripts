@@ -66,7 +66,8 @@ export MANIFEST=Satellite_61_Generated_27_Jul_2016.zip
 # 3 = content sync
 # 4 = environment setup
 # 5 = content views
-# xx host groups, activation keys, sc_params, hosts
+# 6 = host groups, activation keys, sc_params
+# 7 = hosts
 export STAGE=1
 
 # This demo setup is built with IPA integration as one important feature to show.
@@ -172,6 +173,8 @@ if [ $STAGE -le 2 ]; then
     firewall-cmd --permanent --add-port='5674/tcp'
     # VNC
     firewall-cmd --permanent --add-port='5901-5930/tcp'
+    # OMAPI
+    # firewall-cmd --permanent --add-port='7911/tcp'
     firewall-cmd --reload
 
     mkdir -p /usr/share/foreman/.ssh
@@ -624,22 +627,22 @@ if [ $STAGE -le 5 ]; then
     # time hammer content-view publish --organization "$ORG" --name CV --description 'Initial Publishing' 2>/dev/null
     # time hammer content-view version promote --organization "$ORG" --content-view CV --to-lifecycle-environment Development  2>/dev/null
     
-# This is ridiculous, but it appears that Satellite-6 requires a restart and reindex after having done all that work in one go.
-# katello-service restart
-# foreman-rake katello:reindex
+# it appears that Satellite-6 requires a reindex to get all custom products visible: BZ #1362194
+katello-service restart
+foreman-rake katello:reindex
 fi
 # END content view setup
 
-PuppetForge_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Puppet Forge' | tail -n+2 | head -n1 | cut -d',' -f1)
-EPEL_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='EPEL' | tail -n+2 | head -n1 | cut -d',' -f1)
-ORG_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search="$ORG" | tail -n+2 | head -n1 | cut -d',' -f1)
-Maven_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Maven' | tail -n+2 | head -n1 | cut -d',' -f1)
-JBoss_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat JBoss Enterprise Application Platform, 16-Core Premium' | tail -n+2 | head -n1 | cut -d',' -f1)
-RHEV_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat Enterprise Virtualization (2-sockets), Standard' | tail -n+2 | head -n1 | cut -d',' -f1)
-RHEL_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat Enterprise Linux Server with Smart Management, Standard (Physical or Virtual Nodes)' | grep -v 'ATOM\|Resilient\|Hyperscale' | tail -n+2 | head -n1 | cut -d',' -f1)
-
 # BEGIN activation key and hostgroup setup
 if [ $STAGE -le 6 ]; then
+    PuppetForge_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Puppet Forge' | tail -n+2 | head -n1 | cut -d',' -f1)
+    EPEL_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='EPEL' | tail -n+2 | head -n1 | cut -d',' -f1)
+    ORG_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search="$ORG" | tail -n+2 | head -n1 | cut -d',' -f1)
+    Maven_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Maven' | tail -n+2 | head -n1 | cut -d',' -f1)
+    JBoss_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat JBoss Enterprise Application Platform, 16-Core Premium' | tail -n+2 | head -n1 | cut -d',' -f1)
+    RHEV_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat Enterprise Virtualization (2-sockets), Standard' | tail -n+2 | head -n1 | cut -d',' -f1)
+    RHEL_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat Enterprise Linux Server with Smart Management, Standard (Physical or Virtual Nodes)' | grep -v 'ATOM\|Resilient\|Hyperscale' | tail -n+2 | head -n1 | cut -d',' -f1)
+
     hammer activation-key create --organization="$ORG" --name='RHEL7_Base' --unlimited-hosts --lifecycle-environment='Development' --content-view='RHEL7_Base'
     hammer activation-key add-subscription --organization="$ORG" --name='RHEL7_Base' --subscription-id="$PuppetForge_Sub_ID" 
     hammer activation-key add-subscription --organization="$ORG" --name='RHEL7_Base' --subscription-id="$RHEL_Sub_ID" 
@@ -770,26 +773,26 @@ if [ $STAGE -le 6 ]; then
           --environment="$environment" --name='RHEL6_Base'
         hammer hostgroup set-parameter --hostgroup='RHEL6_Base' --name='kt_activation_keys' --value='RHEL6_Base'
     fi
+
+
+    param_id=$(hammer --output=csv sc-param list --puppet-class='ssh::server' --search='options' | tail -n+2 | head -n1 | cut -d',' -f1)
+    hammer sc-param update --puppet-class='ssh::server' --override=1 --id=$param_id \
+        --default-value='{ "PermitRootLogin": false, "Protocol": 2, "UsePrivilegeSeparation": "sandbox", "SyslogFacility": "AUTHPRIV", "AuthorizedKeysFile": ".ssh/authorized_keys", "PasswordAuthentication": true, "GSSAPICleanupCredentials": false, "KerberosAuthentication": false, "PubkeyAuthentication": true, "GSSAPIAuthentication": true, "AuthorizedKeysCommand": "/usr/bin/sss_ssh_authorizedkeys", "AuthorizedKeysCommandUser": "nobody" }' \
+        --override-value-order='operatingsystemmajrelease^Mfqdn^Mhostgroup^Mos^Mdomain'
+    hammer sc-param add-override-value --puppet-class='ssh::server' --smart-class-parameter-id=$param_id --match='operatingsystemmajrelease=6' \
+        --value='{ "PermitRootLogin": false, "Protocol": 2, "SyslogFacility": "AUTHPRIV", "AuthorizedKeysFile": ".ssh/authorized_keys", "PasswordAuthentication": true, "GSSAPICleanupCredentials": false, "KerberosAuthentication": false, "PubkeyAuthentication": true, "GSSAPIAuthentication": true, "AuthorizedKeysCommand": "/usr/bin/sss_ssh_authorizedkeys" }'
+
+    param_id=$(hammer --output=csv sc-param list --puppet-class='buildhost' --search='deploy_demo' | tail -n+2 | head -n1 | cut -d',' -f1)
+    hammer sc-param update --puppet-class='buildhost' --override=1 --id=$param_id \
+        --default-value='false'
+    param_id=$(hammer --output=csv sc-param list --puppet-class='buildhost' --search='ci_git_host' | tail -n+2 | head -n1 | cut -d',' -f1)
+    hammer sc-param update --puppet-class='buildhost' --override=1 --id=$param_id \
+        --default-value="${HOST_PREFIX}-git.${DOMAIN}"
+    param_id=$(hammer --output=csv sc-param list --puppet-class='buildhost' --search='ci_target_env' | tail -n+2 | head -n1 | cut -d',' -f1)
+    hammer sc-param update --puppet-class='buildhost' --override=1 --id=$param_id \
+        --default-value=2
 fi
 # END activation key and hostgroup setup
-
-
-param_id=$(hammer --output=csv sc-param list --puppet-class='ssh::server' --search='options' | tail -n+2 | head -n1 | cut -d',' -f1)
-hammer sc-param update --puppet-class='ssh::server' --override=1 --id=$param_id \
-    --default-value='{ "PermitRootLogin": false, "Protocol": 2, "UsePrivilegeSeparation": "sandbox", "SyslogFacility": "AUTHPRIV", "AuthorizedKeysFile": ".ssh/authorized_keys", "PasswordAuthentication": true, "GSSAPICleanupCredentials": false, "KerberosAuthentication": false, "PubkeyAuthentication": true, "GSSAPIAuthentication": true, "AuthorizedKeysCommand": "/usr/bin/sss_ssh_authorizedkeys", "AuthorizedKeysCommandUser": "nobody" }' \
-    --override-value-order='operatingsystemmajrelease^Mfqdn^Mhostgroup^Mos^Mdomain'
-hammer sc-param add-override-value --puppet-class='ssh::server' --smart-class-parameter-id=$param_id --match='operatingsystemmajrelease=6' \
-    --value='{ "PermitRootLogin": false, "Protocol": 2, "SyslogFacility": "AUTHPRIV", "AuthorizedKeysFile": ".ssh/authorized_keys", "PasswordAuthentication": true, "GSSAPICleanupCredentials": false, "KerberosAuthentication": false, "PubkeyAuthentication": true, "GSSAPIAuthentication": true, "AuthorizedKeysCommand": "/usr/bin/sss_ssh_authorizedkeys" }'
-
-param_id=$(hammer --output=csv sc-param list --puppet-class='buildhost' --search='deploy_demo' | tail -n+2 | head -n1 | cut -d',' -f1)
-hammer sc-param update --puppet-class='buildhost' --override=1 --id=$param_id \
-    --default-value='false'
-param_id=$(hammer --output=csv sc-param list --puppet-class='buildhost' --search='ci_git_host' | tail -n+2 | head -n1 | cut -d',' -f1)
-hammer sc-param update --puppet-class='buildhost' --override=1 --id=$param_id \
-    --default-value="${HOST_PREFIX}-git.${DOMAIN}"
-param_id=$(hammer --output=csv sc-param list --puppet-class='buildhost' --search='ci_target_env' | tail -n+2 | head -n1 | cut -d',' -f1)
-hammer sc-param update --puppet-class='buildhost' --override=1 --id=$param_id \
-    --default-value=2
 
     read -p "
 
@@ -812,7 +815,7 @@ hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$
 hammer host start --name="${HOST_PREFIX}-rhel7std01.${DOMAIN}"
 hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$COMPUTE_RES_NAME" --compute-profile='2-Medium' --hostgroup='inf-git-rhel7' --name="${HOST_PREFIX}-git"
 hammer host start --name="${HOST_PREFIX}-git.${DOMAIN}"
-hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$COMPUTE_RES_NAME" --compute-profile='2-Medium' --hostgroup='inf-dockerhost-rhel7' --name="${HOST_PREFIX}-docker01"
+hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$COMPUTE_RES_NAME" --compute-profile='2-Medium' --hostgroup='inf-docker-rhel7' --name="${HOST_PREFIX}-docker01"
 hammer host start --name="${HOST_PREFIX}-docker01.${DOMAIN}"
 hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$COMPUTE_RES_NAME" --compute-profile='3-Large' --hostgroup='inf-builder-rhel7' --name="${HOST_PREFIX}-build01"
 hammer host start --name="${HOST_PREFIX}-build01.${DOMAIN}"
