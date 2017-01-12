@@ -121,8 +121,17 @@ export HOST_PASSWORD='Geheim!!'
 # This demo is intended to run on a simple libvirt/KVM hypervisor.
 # A dedicated server hosted by an internet service provider may be a cost effective choice for this ressource.
 export CONFIGURE_LIBVIRT_RESOURCE=true
-export COMPUTE_RES_NAME="Puck"
-export COMPUTE_RES_FQDN="puck1054.server4you.de"
+export LIBVIRT_RES_NAME="Puck"
+export LIBVIRT_RES_FQDN="puck1054.server4you.de"
+
+# 
+export CONFIGURE_RHEV_RESOURCE=false
+export RHV_VERSION_4=true
+export RHV_RES_NAME="BX-RHV4"
+export RHV_RES_FQDN="rhev4.lunetix.org"
+export RHV_RES_USER="admin@internal"
+export RHV_RES_PASSWD="Geheim!!"
+export RHV_RES_UUID="Default"
 
 # FIRST_SATELLITE matters only if you want to have more than one Sat work with the same IPA REALM infrastructure.
 # If this is the case, you need to make sure to set this to false for all subsequent Satellite instances.
@@ -159,7 +168,7 @@ if [ $STAGE -le 1 ]; then
         openssl genrsa -out /root/certs/key.pem 2048
         openssl req -new -key /root/certs/key.pem -out /root/certs/${longname}.csr
         serial=$(ipa cert-request --add --principal=host/$(hostname) /root/certs/${longname}.csr|grep number:|cut -d' ' -f5)
-        ipa cert-show --out /root/certs/${longname}.pem $serial
+        ipa cert-show --out /root/certs/${longname}.crt $serial
     fi
 fi
 # END preqeq prep
@@ -174,12 +183,12 @@ if [ $STAGE -le 2 ]; then
     # VNC
     firewall-cmd --permanent --add-port='5901-5930/tcp'
     # OMAPI
-    # firewall-cmd --permanent --add-port='7911/tcp'
+    firewall-cmd --permanent --add-port='7911/tcp'
     firewall-cmd --reload
 
     mkdir -p /usr/share/foreman/.ssh
     ssh-keygen -f /usr/share/foreman/.ssh/id_rsa -t rsa -N ''
-    ssh-keyscan -t ecdsa $COMPUTE_RES_FQDN >/usr/share/foreman/.ssh/known_hosts
+    ssh-keyscan -t ecdsa $LIBVIRT_RES_FQDN >/usr/share/foreman/.ssh/known_hosts
     chown -R foreman.foreman /usr/share/foreman/.ssh
 
     mkdir -p /root/.hammer
@@ -197,10 +206,10 @@ EOF
           -k /root/certs/key.pem \
           -c /root/certs/${longname}.crt \
           -r /root/certs/${longname}.csr
-        CERT_ARGS="--certs-server-ca-cert /etc/ipa/ca.crt \
-               --certs-server-key /root/certs/key.pem \
-               --certs-server-cert /root/certs/${longname}.crt \
-               --certs-server-cert-req /root/certs/${longname}.csr"
+        CERT_ARGS="--certs-server-ca-cert=/etc/ipa/ca.crt \
+               --certs-server-key=/root/certs/key.pem \
+               --certs-server-cert=/root/certs/${longname}.crt \
+               --certs-server-cert-req=/root/certs/${longname}.csr"
     fi
 
     if [ $FIRST_SATELLITE = 'true' ]; then
@@ -224,35 +233,42 @@ EOF
     update-ca-trust enable
     update-ca-trust
 
-    time satellite-installer --scenario satellite -v -d \
-      --foreman-admin-password $ADMIN_PASSWORD \
-      --foreman-admin-username $ADMIN \
-      --foreman-initial-organization $ORG \
-      --foreman-initial-location $LOC \
-      --foreman-proxy-dns true \
-      --foreman-proxy-dns-interface $SAT_INTERFACE \
-      --foreman-proxy-dns-zone $DOMAIN  \
-      --foreman-proxy-dns-forwarders $DNS \
-      --foreman-proxy-dns-reverse $DNS_REV  \
-      --foreman-proxy-dhcp true \
-      --foreman-proxy-dhcp-interface $SAT_INTERFACE \
-      --foreman-proxy-dhcp-range "$DHCP_RANGE" \
-      --foreman-proxy-dhcp-gateway $DHCP_GW \
-      --foreman-proxy-dhcp-nameservers $DHCP_DNS \
-      --foreman-proxy-tftp true \
-      --foreman-proxy-tftp-servername $(hostname) \
-      --capsule-puppet true \
-      --foreman-proxy-puppetca true ${CERT_ARGS} \
-      --foreman-proxy-realm true \
-      --foreman-proxy-realm-keytab /etc/foreman-proxy/freeipa.keytab \
-      --foreman-proxy-realm-principal "realm-capsule@${REALM}" \
-      --foreman-proxy-realm-provider freeipa
+    time satellite-installer --scenario satellite -v \
+      --foreman-admin-password=$ADMIN_PASSWORD \
+      --foreman-admin-username=$ADMIN \
+      --foreman-initial-organization=$ORG \
+      --foreman-initial-location=$LOC \
+      --foreman-proxy-dns=true \
+      --foreman-proxy-dns-interface=$SAT_INTERFACE \
+      --foreman-proxy-dns-zone=$DOMAIN  \
+      --foreman-proxy-dns-forwarders=$DNS \
+      --foreman-proxy-dns-reverse=$DNS_REV  \
+      --foreman-proxy-dhcp=true \
+      --foreman-proxy-dhcp-interface=$SAT_INTERFACE \
+      --foreman-proxy-dhcp-range="$DHCP_RANGE" \
+      --foreman-proxy-dhcp-gateway=$DHCP_GW \
+      --foreman-proxy-dhcp-nameservers=$DHCP_DNS \
+      --foreman-proxy-tftp=true \
+      --foreman-proxy-tftp-servername=$(hostname) \
+      --capsule-puppet=true \
+      --foreman-proxy-puppetca=true ${CERT_ARGS} \
+      --foreman-proxy-realm=true \
+      --foreman-proxy-realm-keytab=/etc/foreman-proxy/freeipa.keytab \
+      --foreman-proxy-realm-principal="realm-capsule@${REALM}" \
+      --foreman-proxy-realm-provider=freeipa \
+      --foreman-ipa-authentication=true \
+      --enable-foreman-plugin-openscap
 
     service foreman-proxy restart
     hammer capsule refresh-features --id=1
-    hammer settings set --name default_download_policy --value immediate
+    hammer settings set --name default_download_policy --value on_demand
     hammer subscription upload --organization "$ORG" --file /tmp/${MANIFEST}
     hammer subscription refresh-manifest --organization "$ORG"
+    yum install -y puppet-foreman_scap_client
+    yum install -y foreman-discovery-image
+    foreman-rake foreman_openscap:bulk_upload:default
+    mkdir -p /etc/puppet/environments/production/modules
+    
     
     read -p "
 
@@ -263,7 +279,7 @@ Manual action required!
     Click \"New Realm\" and use ${REALM} as new realm name.
     Leave Red hat Identity Management as realm type and select the appropriate Locations and Organizations.
 
-    You also need to add /usr/share/foreman/.ssh/id_rsa.pub to root@${COMPUTE_RES_FQDN}:.ssh/authorized_keys
+    You also need to add /usr/share/foreman/.ssh/id_rsa.pub to root@${LIBVIRT_RES_FQDN}:.ssh/authorized_keys
 
     Hit Enter after the realm has been created." answer
 fi
@@ -275,8 +291,9 @@ fi
 if [ $STAGE -le 3 ]; then
     date
     # Essential RHEL7 Content
-    hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='7.2' --name 'Red Hat Enterprise Linux 7 Server (Kickstart)' 
-    time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.2' 2>/dev/null
+    hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='7.3' --name 'Red Hat Enterprise Linux 7 Server (Kickstart)' 
+    hammer repository update --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --name 'Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.3' --download-policy immediate
+    time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.3' 2>/dev/null
     # 4620P, 3.36G, 50 min
     hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='7Server' --name 'Red Hat Enterprise Linux 7 Server (RPMs)'    
     time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server' 2>/dev/null
@@ -337,10 +354,13 @@ if [ $STAGE -le 3 ]; then
         hammer repository-set enable --organization "$ORG" --product 'Red Hat Satellite Capsule' --basearch='x86_64' --name 'Red Hat Satellite Capsule 6.2 (for RHEL 7 Server) (RPMs)'
         time hammer repository synchronize --organization "$ORG" --product 'Red Hat Satellite Capsule'  --name  'Red Hat Satellite Capsule 6.2 for RHEL 7 Server RPMs x86_64' 2>/dev/null
         #
+        hammer repository-set enable --organization "$ORG" --product 'Red Hat OpenShift Container Platform' --basearch='x86_64' --name 'Red Hat OpenShift Enterprise 3.2 (RPMs)'
+        time hammer repository synchronize --organization "$ORG" --product 'Red Hat OpenShift Container Platform'  --name  'Red Hat OpenShift Enterprise 3.2 RPMs x86_64' 2>/dev/null
+        # 564P, 832M, 12 min
         wget https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-7Server
         hammer gpg create --organization "$ORG" --name 'GPG-EPEL7' --key RPM-GPG-KEY-EPEL-7Server
         hammer product create --name='EPEL' --organization "$ORG"
-        hammer repository create  --organization "$ORG" --name='EPEL 7 - x86_64' --product='EPEL' --gpg-key='GPG-EPEL7' --content-type='yum' --publish-via-http=true --url=http://mirror.de.leaseweb.net/epel/7/x86_64/ --download-policy immediate
+        hammer repository create  --organization "$ORG" --name='EPEL 7 - x86_64' --product='EPEL' --gpg-key='GPG-EPEL7' --content-type='yum' --publish-via-http=true --url=http://mirror.de.leaseweb.net/epel/7/x86_64/ --download-policy on_demand
         time hammer repository synchronize --organization "$ORG" --product 'EPEL'  --name  'EPEL 7 - x86_64' 2>/dev/null
         # 10393P, 10.8G, 200 min
 
@@ -368,9 +388,6 @@ if [ $STAGE -le 3 ]; then
         hammer repository-set enable --organization "$ORG" --product 'Red Hat Ceph Storage' --basearch='x86_64' --releasever='7Server' --name 'Red Hat Ceph Storage Installer 1.3 for Red Hat Enterprise Linux 7 Server (RPMs)'
         time hammer repository synchronize --organization "$ORG" --product 'Red Hat Ceph Storage'  --name  'Red Hat Ceph Storage Installer 1.3 for Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server' 2>/dev/null
 
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat OpenShift Container Platform' --basearch='x86_64' --name 'Red Hat OpenShift Enterprise 3.2 (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat OpenShift Container Platform'  --name  'Red Hat OpenShift Enterprise 3.2 RPMs x86_64' 2>/dev/null
-        # 564P, 832M, 12 min
 
         hammer repository-set enable --organization "$ORG" --product 'Red Hat OpenStack' --basearch='x86_64' --releasever='7Server' --name 'Red Hat OpenStack Platform 8 Operational Tools for RHEL 7 (RPMs)'
         time hammer repository synchronize --organization "$ORG" --product 'Red Hat OpenStack'  --name  'Red Hat OpenStack Platform 8 Operational Tools for RHEL 7 RPMs x86_64 7Server' 2>/dev/null
@@ -406,7 +423,6 @@ if [ $STAGE -le 3 ]; then
         df -h
     fi
     if [ $CUST_CONTENT = 'true' ]; then
-        echo '85.25.159.110 sol.lunetix.org' >>/etc/hosts
         hammer product create --name="$ORG" --organization "$ORG"
         hammer repository create  --organization "$ORG" --name='Puppet Modules' --product="$ORG" --content-type='puppet' --publish-via-http=true --url=http://sol.lunetix.org/repos/puppet-modules/
         time hammer repository synchronize --organization "$ORG" --product="$ORG"  --name='Puppet Modules' 2>/dev/null
@@ -437,7 +453,29 @@ if [ $STAGE -le 4 ]; then
     hammer lifecycle-environment create --organization "$ORG" --description 'Production' --name 'Production' --label production --prior 'Test'
 
 
-    hammer compute-resource create --organizations "$ORG" --name "$COMPUTE_RES_NAME" --locations "$LOC" --provider Libvirt --url qemu+ssh://root@${COMPUTE_RES_FQDN}/system --set-console-password false
+    if [ $CONFIGURE_LIBVIRT_RESOURCE = 'true' ]; then
+        hammer compute-resource create --organizations "$ORG" --name "$LIBVIRT_RES_NAME" --locations "$LOC" --provider Libvirt --url qemu+ssh://root@${LIBVIRT_RES_FQDN}/system --set-console-password false
+    fi
+
+    if [ $CONFIGURE_RHEV_RESOURCE = 'true' ]; then
+        hammer compute-resource create --name "${RHV_RES_NAME}" --provider "Ovirt" --description "RHV4 Managment Server" --url "https://${RHV_RES_FQDN}/ovirt-engine/api/v3" --user "${RHV_RES_USER}" --password "${RHV_RES_PASSWD}" --locations "$LOC" --organizations "$ORG" --uuid "${RHV_RES_UUID}"
+        if [ $RHV_VERSION_4 = 'true' ]; then
+            read -p "
+
+Manual action required!
+
+    To proceed, you need to manually add the ca.crt for the RHV compute resource.
+    
+    Download the RHV rhvm.crt with
+    curl -o rhvm.crt http://${RHV_RES_FQDN}/ovirt-engine/services/pki-resource?resource=ca-certificate&format=X509-PEM-CA
+    
+    Log into your Satellite-6.2 as admin and go to Infrastructure->Compute Resources.
+    Paste the content of the downloaded rhvm.crt into the X509 Certification Authorities field.
+
+
+    Hit Enter after the certificate is stored." answer
+        fi
+    fi
 
     hammer domain update --id 1 --organizations "$ORG" --locations "$LOC"
 
@@ -484,6 +522,8 @@ volgroup dockerhost pv.01
 logvol / --vgname=dockerhost --size=9000 --name=rootvol
 EOF
     hammer partition-table create  --file=kickstart-docker --name='Kickstart Docker' --os-family='Redhat' --organizations="$ORG" --locations="$LOC"
+    hammer os update --title 'RedHat 7.3' --partition-tables='Kickstart default','Kickstart Docker'
+    hammer os update --title 'Red Hat Enterprise Linux Atomic Host 7.3' --partition-tables='Kickstart default','Kickstart Docker'
 fi
 # END environment setup
 
@@ -551,12 +591,32 @@ if [ $STAGE -le 5 ]; then
     time hammer content-view publish --organization "$ORG" --name inf-builder-rhel7 --description 'Initial Publishing'
     time hammer content-view version promote --organization "$ORG" --content-view inf-builder-rhel7 --to-lifecycle-environment Development
 
+    hammer content-view create --organization "$ORG" --name 'inf-oscp-rhel7' --label inf-oscp-rhel7 --description ''
+    hammer content-view add-repository --organization "$ORG" --name 'inf-oscp-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-oscp-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-oscp-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-oscp-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-oscp-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Extras RPMs x86_64'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-oscp-rhel7' --product 'Red Hat OpenShift Container Platform' --repository 'Red Hat OpenShift Enterprise 3.2 RPMs x86_64'
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-oscp-rhel7 --author puppetlabs --name stdlib
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-oscp-rhel7 --author puppetlabs --name concat
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-oscp-rhel7 --author puppetlabs --name ntp
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-oscp-rhel7 --author saz --name ssh
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-oscp-rhel7 --author cristifalcas --name kubernetes
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-oscp-rhel7 --author cristifalcas --name etcd
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-oscp-rhel7 --author LunetIX --name docker
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-oscp-rhel7 --author crayfishx --name firewalld
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-oscp-rhel7 --author LunetIX --name oscp
+    time hammer content-view publish --organization "$ORG" --name inf-oscp-rhel7 --description 'Initial Publishing'
+    time hammer content-view version promote --organization "$ORG" --content-view inf-oscp-rhel7 --to-lifecycle-environment Development
+
     hammer content-view create --organization "$ORG" --name 'inf-docker-rhel7' --label inf-docker-rhel7 --description ''
     hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
     hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
     hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
     hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server'
     hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Extras RPMs x86_64'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat OpenShift Container Platform' --repository 'Red Hat OpenShift Enterprise 3.2 RPMs x86_64'
     hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'JBoss Enterprise Application Platform' --repository 'JBoss Enterprise Application Platform 7 RHEL 7 Server RPMs x86_64 7Server'
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author puppetlabs --name concat
@@ -583,7 +643,8 @@ if [ $STAGE -le 5 ]; then
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author camptocamp --name archive
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author cristifalcas --name kubernetes
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author cristifalcas --name etcd
-    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author cristifalcas --name docker
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author LunetIX --name docker
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author LunetIX --name oscp
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author crayfishx --name firewalld
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author LunetIX --name dockerhost
     time hammer content-view publish --organization "$ORG" --name puppet-fasttrack --description 'Initial Publishing'
@@ -592,6 +653,7 @@ if [ $STAGE -le 5 ]; then
     hammer content-view create --organization "$ORG" --name 'inf-git-rhel7' --label inf-git-rhel7 --description ''
     hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
     hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
     hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'EPEL' --repository 'EPEL 7 - x86_64'
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name concat
@@ -641,6 +703,7 @@ if [ $STAGE -le 6 ]; then
     Maven_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Maven' | tail -n+2 | head -n1 | cut -d',' -f1)
     JBoss_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat JBoss Enterprise Application Platform, 16-Core Premium' | tail -n+2 | head -n1 | cut -d',' -f1)
     RHEV_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat Enterprise Virtualization (2-sockets), Standard' | tail -n+2 | head -n1 | cut -d',' -f1)
+    OSCP_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='OpenShift Enterprise, Premium (1-2 Sockets)' | tail -n+2 | head -n1 | cut -d',' -f1)
     RHEL_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat Enterprise Linux Server with Smart Management, Standard (Physical or Virtual Nodes)' | grep -v 'ATOM\|Resilient\|Hyperscale' | tail -n+2 | head -n1 | cut -d',' -f1)
 
     hammer activation-key create --organization="$ORG" --name='RHEL7_Base' --unlimited-hosts --lifecycle-environment='Development' --content-view='RHEL7_Base'
@@ -651,8 +714,8 @@ if [ $STAGE -le 6 ]; then
     hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
-      --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
+      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_3' \
+      --lifecycle-environment='Development' --operatingsystem='RedHat 7.3' --partition-table='Kickstart default' \
       --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='RHEL7_Base' \
       --environment='KT_LunetIX_development_rhel7_base_2' --name='RHEL7_Base'
     hammer hostgroup set-parameter --hostgroup='RHEL7_Base' --name='kt_activation_keys' --value='RHEL7_Base'
@@ -675,8 +738,8 @@ if [ $STAGE -le 6 ]; then
     hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
-      --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
+      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_3' \
+      --lifecycle-environment='Development' --operatingsystem='RedHat 7.3' --partition-table='Kickstart default' \
       --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,buildhost'  --content-view='inf-builder-rhel7' \
       --environment="$environment" --name='inf-builder-rhel7'
     hammer hostgroup set-parameter --hostgroup='inf-builder-rhel7' --name='kt_activation_keys' --value='inf-builder-rhel7'
@@ -693,8 +756,8 @@ if [ $STAGE -le 6 ]; then
     hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
-      --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
+      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_3' \
+      --lifecycle-environment='Development' --operatingsystem='RedHat 7.3' --partition-table='Kickstart default' \
       --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='inf-hypervisor-rhel7' \
       --environment="$environment" --name='inf-hypervisor-rhel7'
     hammer hostgroup set-parameter --hostgroup='inf-hypervisor-rhel7' --name='kt_activation_keys' --value='inf-hypervisor-rhel7'
@@ -711,8 +774,8 @@ if [ $STAGE -le 6 ]; then
     hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
-      --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
+      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_3' \
+      --lifecycle-environment='Development' --operatingsystem='RedHat 7.3' --partition-table='Kickstart default' \
       --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,git::server'  --content-view='inf-git-rhel7' \
       --environment="$environment" --name='inf-git-rhel7'
     hammer hostgroup set-parameter --hostgroup='inf-git-rhel7' --name='kt_activation_keys' --value='inf-git-rhel7'
@@ -723,22 +786,51 @@ if [ $STAGE -le 6 ]; then
     hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$ORG_Sub_ID" 
     hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$EPEL_Sub_ID" 
     hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$JBoss_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-docker-rhel7' --subscription-id="$OSCP_Sub_ID" 
     hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
     hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
     hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-optional-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-extras-rpms' --value=1
     hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-supplementary-rpms' --value=1
     hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-rh-common-rpms' --value=1
     hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='jb-eap-7-for-rhel-7-server-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-docker-rhel7' --content-label='rhel-7-server-ose-3.2-rpms' --value=1
     hammer activation-key update --organization="$ORG" --name='inf-docker-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
     environment=$(hammer --output=csv environment list --search='development_inf_docker_rhel7' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
     hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
-      --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
+      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_3' \
+      --lifecycle-environment='Development' --operatingsystem='RedHat 7.3' --partition-table='Kickstart default' \
       --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,dockerhost'  --content-view='inf-docker-rhel7' \
       --environment="$environment" --name='inf-docker-rhel7'
     hammer hostgroup set-parameter --hostgroup='inf-docker-rhel7' --name='kt_activation_keys' --value='inf-docker-rhel7'
+
+    hammer activation-key create --organization="$ORG" --name='inf-oscp-rhel7' --unlimited-hosts --lifecycle-environment='Development' --content-view='inf-oscp-rhel7'
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-oscp-rhel7' --subscription-id="$PuppetForge_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-oscp-rhel7' --subscription-id="$RHEL_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-oscp-rhel7' --subscription-id="$ORG_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-oscp-rhel7' --subscription-id="$EPEL_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-oscp-rhel7' --subscription-id="$JBoss_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name='inf-oscp-rhel7' --subscription-id="$OSCP_Sub_ID" 
+    hammer activation-key content-override --organization="$ORG" --name='inf-oscp-rhel7' --content-label='rhel-7-server-satellite-tools-6.2-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-oscp-rhel7' --content-label='rhel-server-rhscl-7-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-oscp-rhel7' --content-label='rhel-7-server-optional-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-oscp-rhel7' --content-label='rhel-7-server-extras-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-oscp-rhel7' --content-label='rhel-7-server-supplementary-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-oscp-rhel7' --content-label='rhel-7-server-rh-common-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-oscp-rhel7' --content-label='jb-eap-7-for-rhel-7-server-rpms' --value=1
+    hammer activation-key content-override --organization="$ORG" --name='inf-oscp-rhel7' --content-label='rhel-7-server-ose-3.2-rpms' --value=1
+    hammer activation-key update --organization="$ORG" --name='inf-oscp-rhel7' --release-version='7Server' --service-level='Standard' --auto-attach=0
+    environment=$(hammer --output=csv environment list --search='development_inf_oscp' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
+    hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
+      --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
+      --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
+      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_3' \
+      --lifecycle-environment='Development' --operatingsystem='RedHat 7.3' --partition-table='Kickstart default' \
+      --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,oscp'  --content-view='inf-oscp-rhel7' \
+      --environment="$environment" --name='inf-oscp-rhel7'
+    hammer hostgroup set-parameter --hostgroup='inf-oscp-rhel7' --name='kt_activation_keys' --value='inf-oscp-rhel7'
 
     hammer activation-key create --organization="$ORG" --name='inf-ipa-rhel7' --unlimited-hosts --lifecycle-environment='Development' --content-view='inf-ipa-rhel7'
     hammer activation-key add-subscription --organization="$ORG" --name='inf-ipa-rhel7' --subscription-id="$PuppetForge_Sub_ID" 
@@ -751,10 +843,10 @@ if [ $STAGE -le 6 ]; then
     hammer hostgroup create --organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_2' \
-      --lifecycle-environment='Development' --operatingsystem='RedHat 7.2' --partition-table='Kickstart default' \
+      --medium='LunetIX/Library/Red_Hat_Server/Red_Hat_Enterprise_Linux_7_Server_Kickstart_x86_64_7_3' \
+      --lifecycle-environment='Development' --operatingsystem='RedHat 7.3' --partition-table='Kickstart default' \
       --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='inf-ipa-rhel7' \
-      --environment="$environment" --name='inf-ipa-rhel7'
+      --partition-table='Kickstart Docker' --environment="$environment" --name='inf-ipa-rhel7'
     hammer hostgroup set-parameter --hostgroup='inf-ipa-rhel7' --name='kt_activation_keys' --value='inf-ipa-rhel7'
 
     if [ $RHEL6_CONTENT = 'true' ]; then
@@ -791,7 +883,7 @@ if [ $STAGE -le 6 ]; then
     param_id=$(hammer --output=csv sc-param list --puppet-class='buildhost' --search='ci_target_env' | tail -n+2 | head -n1 | cut -d',' -f1)
     hammer sc-param update --puppet-class='buildhost' --override=1 --id=$param_id \
         --default-value=2
-fi
+# fi
 # END activation key and hostgroup setup
 
     read -p "
@@ -811,12 +903,13 @@ Manual action required!
 # echo "DEFROUTE=no" >>/etc/sysconfig/network-scripts/ifcfg-eth0
 # systemctl restart network
 
-hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$COMPUTE_RES_NAME" --compute-profile='1-Small' --hostgroup='RHEL7_Base' --name="${HOST_PREFIX}-rhel7std01"
+hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$RHV_RES_NAME" --compute-profile='1-Small' --hostgroup='RHEL7_Base' --name="${HOST_PREFIX}-rhel7std01"
 hammer host start --name="${HOST_PREFIX}-rhel7std01.${DOMAIN}"
-hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$COMPUTE_RES_NAME" --compute-profile='2-Medium' --hostgroup='inf-git-rhel7' --name="${HOST_PREFIX}-git"
+hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$RHV_RES_NAME" --compute-profile='2-Medium' --hostgroup='inf-git-rhel7' --name="${HOST_PREFIX}-git"
 hammer host start --name="${HOST_PREFIX}-git.${DOMAIN}"
-hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$COMPUTE_RES_NAME" --compute-profile='2-Medium' --hostgroup='inf-docker-rhel7' --name="${HOST_PREFIX}-docker01"
+fi
+hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$RHV_RES_NAME" --compute-profile='2-Medium' --hostgroup='inf-docker-rhel7' --name="${HOST_PREFIX}-docker01"
 hammer host start --name="${HOST_PREFIX}-docker01.${DOMAIN}"
-hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$COMPUTE_RES_NAME" --compute-profile='3-Large' --hostgroup='inf-builder-rhel7' --name="${HOST_PREFIX}-build01"
+hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$RHV_RES_NAME" --compute-profile='3-Large' --hostgroup='inf-builder-rhel7' --name="${HOST_PREFIX}-build01"
 hammer host start --name="${HOST_PREFIX}-build01.${DOMAIN}"
 
