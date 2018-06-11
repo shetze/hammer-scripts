@@ -125,6 +125,13 @@ export HOST_PREFIX='kvm-'
 # This is the default password used in hostgroup declarations.
 export HOST_PASSWORD='Geheim!!'
 
+
+export PREPARE_CAPSULE=true
+export CAPSULE_NAME=capsule.example.com
+export CAPSULE_LOC="Orion"
+longcapsulename=$(echo $CAPSULE_NAME | tr '.' '_')
+
+
 # This demo is intended to run on a simple libvirt/KVM hypervisor.
 # A dedicated server hosted by an internet service provider may be a cost effective choice for this ressource.
 export CONFIGURE_LIBVIRT_RESOURCE=true
@@ -197,6 +204,8 @@ if [ $STAGE -le 2 ]; then
     firewall-cmd --permanent --add-port='5901-5930/tcp'
     # OMAPI
     firewall-cmd --permanent --add-port='7911/tcp'
+    # Capsule
+    firewall-cmd --permanent --add-port="5000/tcp" --add-port="5646/tcp"
     firewall-cmd --reload
 
     mkdir -p /usr/share/foreman/.ssh
@@ -226,7 +235,7 @@ EOF
     fi
 
     if [ $FIRST_SATELLITE = 'true' ]; then
-        foreman-prepare-realm admin realm-capsule
+        foreman-prepare-realm admin realm-proxy
     elif [ ! -f /root/freeipa.keytab ]; then
         read -p "
 
@@ -268,7 +277,7 @@ EOF
       --foreman-proxy-puppetca=true ${CERT_ARGS} \
       --foreman-proxy-realm=true \
       --foreman-proxy-realm-keytab=/etc/foreman-proxy/freeipa.keytab \
-      --foreman-proxy-realm-principal="realm-capsule@${REALM}" \
+      --foreman-proxy-realm-principal="realm-proxy@${REALM}" \
       --foreman-proxy-realm-provider=freeipa \
       --foreman-ipa-authentication=true \
       --enable-foreman-plugin-openscap
@@ -283,6 +292,20 @@ EOF
     foreman-rake foreman_openscap:bulk_upload:default
     mkdir -p /etc/puppet/environments/production/modules
     hammer realm create --realm-type='Red Hat Identity Management' --name=${REALM} --realm-proxy-id=1 --locations=${LOC} --organizations=${ORG}
+
+    if [ $PREPARE_CAPSULE = 'true' ]; then
+        hammer location create --name=$CAPSULE_LOC --description='Capsule Location'
+        hammer location add-organization --name=$CAPSULE_LOC --organization=$ORG
+        export CAPSULE_PASS=$(pwmake 64)
+        hammer user create --login='capsule' --firstname='Satellite' --lastname='Capsule' --default-location=$CAPSULE_LOC --default-organization=$ORG --locale='de' --organizations=$ORG --locations=$CAPSULE_LOC --timezone='Berlin' --password="$CAPSULE_PASS" --admin=true --mail="capsule@${DOMAIN}" --auth-source-id=1
+        cat > /root/.hammer/capsule_cli_config.yml <<EOF
+:foreman:
+    :host: 'https://$(hostname)/'
+    :username: 'capsule'
+    :password: '$CAPSULE_PASS'
+    :request_timeout: -1
+EOF
+    fi
 
 fi
 # END installation
@@ -363,6 +386,9 @@ if [ $STAGE -le 3 ]; then
         hammer repository-set enable --organization "$ORG" --product 'Red Hat Satellite Capsule' --basearch='x86_64' --name 'Red Hat Satellite Capsule 6.3 (for RHEL 7 Server) (RPMs)'
         time hammer repository synchronize --organization "$ORG" --product 'Red Hat Satellite Capsule'  --name  'Red Hat Satellite Capsule 6.3 for RHEL 7 Server RPMs x86_64' 2>/dev/null
         # 6P, 517k, 1min
+        hammer repository-set enable --organization "$ORG" --product 'Red Hat Satellite Capsule' --basearch='x86_64' --name 'Red Hat Satellite Capsule 6.3 - Puppet 4 (for RHEL 7 Server) (RPMs)'
+        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Satellite Capsule'  --name  'Red Hat Satellite Capsule 6.3 - Puppet 4 for RHEL 7 Server RPMs x86_64' 2>/dev/null
+        # 3P, 517k, 1min
         hammer repository-set enable --organization "$ORG" --product 'Red Hat OpenShift Container Platform' --basearch='x86_64' --name 'Red Hat OpenShift Container Platform 3.9 (RPMs)'
         time hammer repository synchronize --organization "$ORG" --product 'Red Hat OpenShift Container Platform'  --name  'Red Hat OpenShift Container Platform 3.9 RPMs x86_64' 2>/dev/null
         # 524P, 1.23G, 4 min
@@ -589,6 +615,22 @@ if [ $STAGE -le 5 ]; then
     time hammer content-view publish --organization "$ORG" --name RHEL7_Base --description 'Initial Publishing' 2>/dev/null
     time hammer content-view version promote --organization "$ORG" --content-view RHEL7_Base --to-lifecycle-environment UnStaged  2>/dev/null
 
+    if [ $PREPARE_CAPSULE = 'true' ]; then
+        hammer content-view create --organization "$ORG" --name 'inf-capsule' --label inf-capsule --description 'Satellite Capsule'
+        hammer content-view add-repository --organization "$ORG" --name 'inf-capsule' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
+        hammer content-view add-repository --organization "$ORG" --name 'inf-capsule' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.3 for RHEL 7 Server RPMs x86_64'
+        hammer content-view add-repository --organization "$ORG" --name 'inf-capsule' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server'
+        hammer content-view add-repository --organization "$ORG" --name 'inf-capsule' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
+        hammer content-view add-repository --organization "$ORG" --name 'inf-capsule' --product 'Red Hat Satellite Capsule' --repository 'Red Hat Satellite Capsule 6.3 for RHEL 7 Server RPMs x86_64'
+        hammer content-view add-repository --organization "$ORG" --name 'inf-capsule' --product 'Red Hat Satellite Capsule' --repository 'Red Hat Satellite Capsule 6.3 - Puppet 4 for RHEL 7 Server RPMs x86_64'
+        hammer content-view puppet-module add --organization "$ORG" --content-view inf-capsule --author puppetlabs --name stdlib
+        hammer content-view puppet-module add --organization "$ORG" --content-view inf-capsule --author puppetlabs --name concat
+        hammer content-view puppet-module add --organization "$ORG" --content-view inf-capsule --author puppetlabs --name ntp
+        hammer content-view puppet-module add --organization "$ORG" --content-view inf-capsule --author saz --name ssh
+        time hammer content-view publish --organization "$ORG" --name inf-capsule --description 'Initial Publishing' 2>/dev/null
+        time hammer content-view version promote --organization "$ORG" --content-view inf-capsule --to-lifecycle-environment UnStaged  2>/dev/null
+    fi
+
     hammer content-view create --organization "$ORG" --name 'inf-ipa-rhel7' --label inf-ipa-rhel7 --description ''
     hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
     hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.3 for RHEL 7 Server RPMs x86_64'
@@ -778,6 +820,30 @@ if [ $STAGE -le 6 ]; then
       --environment="KT_${ORG}_unstaged_rhel7_base_2" --name='RHEL7_Base'
     hammer hostgroup set-parameter --hostgroup='RHEL7_Base' --name='kt_activation_keys' --value="el7base-${uuid}"
     hammer hostgroup set-parameter --hostgroup='RHEL7_Base' --name='enable-puppet4' --value='true'
+
+    if [ $PREPARE_CAPSULE = 'true' ]; then
+        CAPSULE_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat Satellite Capsule Server' | tail -n+2 | head -n1 | cut -d',' -f1)
+        uuid=$(uuidgen)
+        hammer activation-key create --organization="$ORG" --name="cap63-${uuid}" --max-hosts=2 --lifecycle-environment='UnStaged' --content-view='inf-capsule'
+        hammer activation-key add-subscription --organization="$ORG" --name="cap63-${uuid}" --subscription-id="$PuppetForge_Sub_ID" 
+        hammer activation-key add-subscription --organization="$ORG" --name="cap63-${uuid}" --subscription-id="$RHEL_Sub_ID" 
+        hammer activation-key add-subscription --organization="$ORG" --name="cap63-${uuid}" --subscription-id="$CAPSULE_Sub_ID" 
+        hammer activation-key content-override --organization="$ORG" --name="cap63-${uuid}" --content-label='rhel-7-server-satellite-tools-6.3-rpms' --value=1
+        hammer activation-key content-override --organization="$ORG" --name="cap63-${uuid}" --content-label='rhel-7-server-satellite-tools-6.3-puppet4-rpms' --value=1
+        hammer activation-key content-override --organization="$ORG" --name="cap63-${uuid}" --content-label='rhel-7-server-satellite-capsule-6.3-rpms' --value=1
+        hammer activation-key content-override --organization="$ORG" --name="cap63-${uuid}" --content-label='rhel-server-rhscl-7-rpms' --value=1
+        hammer activation-key update --organization="$ORG" --name="cap63-${uuid}" --release-version='7Server' --service-level='Standard' --auto-attach=0
+        environment=$(hammer --output=csv environment list --search='unstaged_inf_capsule' --puppet-class='stdlib' | tail -n+2 | head -n1 | cut -d',' -f2)
+        hammer hostgroup create --query-organization="$ORG" --organizations="$ORG" --locations="$LOC" \
+          --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
+          --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
+          --medium='RHEL 7.5 Kickstart' --pxe-loader='PXELinux BIOS' \
+          --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.5' --partition-table='Kickstart default' \
+          --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='inf-capsule' \
+          --environment="${environment}" --name='inf-capsule'
+        hammer hostgroup set-parameter --hostgroup='inf-capsule' --name='kt_activation_keys' --value="cap63-${uuid}"
+        hammer hostgroup set-parameter --hostgroup='inf-capsule' --name='enable-puppet4' --value='true'
+    fi
 
     hammer activation-key create --organization="$ORG" --name='inf-builder-rhel7' --max-hosts=5 --lifecycle-environment='UnStaged' --content-view='inf-builder-rhel7'
     hammer activation-key add-subscription --organization="$ORG" --name='inf-builder-rhel7' --subscription-id="$PuppetForge_Sub_ID" 
@@ -1004,7 +1070,7 @@ Manual action required!
     To proceed you may need to fix realm settings.
     Edit /etc/foreman-proxy/settings.d/realm_freeipa.yml
     and make sure it reads
-    :principal: realm-capsule@${REALM}
+    :principal: realm-proxy@${REALM}
 
     In case you need to edit the file, you also need to restart Satellite
 
