@@ -47,16 +47,16 @@ Read through the values carefully and change where appropriate.
 When finished, delete or comment the following exit command.
 
 EOF
-exit 0
+# exit 0
 
 set -x
 set -e
 longname=$(hostname | tr '.' '_')
 
 # This is a Sat6 engineering manifest. Replace with your custom manifest.
-export MANIFEST=Satellite_62_Generated_30_Apr_2018.zip
-# scp Satellite_61_Generated_27_Jul_2016.zip root@satellite62.example.com:/tmp
-# scp sat62-setup.sh root@satellite62.example.com:
+export MANIFEST=Satellite_65_Generated_July_16_2019.zip
+# scp Satellite_65_Generated_July_16_2019.zip root@satellite65.example.com:/tmp
+# scp sat65-setup.sh root@satellite65.example.com:
 
 # The script is built such that the preparation steps can be skipped if later stages need to be extended or repeated.
 # The higher the STAGE Level is, the more preparation steps are skipped.
@@ -68,7 +68,7 @@ export MANIFEST=Satellite_62_Generated_30_Apr_2018.zip
 # 5 = content views
 # 6 = host groups, activation keys, sc_params
 # 7 = hosts
-export STAGE=1
+export STAGE=2
 
 # This demo setup is built with IPA integration as one important feature to show.
 # While it is possible to use IPA and leave Satellite with the self signed internal CA cert,
@@ -91,35 +91,37 @@ export RHEL6_CONTENT=false
 export OPT_CONTENT=true
 export EXT_CONTENT=false
 export CUST_CONTENT=true
-export CUSTOM_REPO_HOST=repo.example.com
-export CUSTOM_REPO_IP=12.23.45.67
+export CUSTOM_REPO_HOST=sol.lunetix.org
+export CUSTOM_REPO_IP=85.25.159.110
 
 # The following block of parameters needs to reflect your environment.
 # Most of the parameters are used with the satellite-installer
 # The purpose should be pretty much self explanatory. In doubt, look at 'satellite-installer --help'
-export SAT_IP=172.24.200.3
-export ORG="ACME"
-export LOC="Nowhere"
+export SAT_CNET=172.24.100
+export DNS_REV=100.24.172.in-addr.arpa
+export SUBNET=${SAT_CNET}.0
+export SUBNET_MASK=255.255.255.0
+export DNS=${SAT_CNET}.2
+export SAT_IP=${SAT_CNET}.3
+export ORG="LunetIX"
+export LOC="Orion"
 export ADMIN=admin
 export ADMIN_PASSWORD=$(pwmake 64)
-export IPA_SERVER=ipa.example.com
-export DOMAIN=example.com
-export REALM=EXAMPLE.COM
+export IPA_SERVER=sol.lunetix.org
+export DOMAIN=lunetix.org
+export REALM=LUNETIX.ORG
+export REALM_PROXY_USER=realm-proxy
 export C=DE
 export ST=Berlin
 export L=Berlin
 export OU=IT-Ops
-export DNS=172.24.200.2
-export DNS_REV=200.24.172.in-addr.arpa
-export DHCP_RANGE="172.24.200.20 172.24.200.50"
-export DHCP_GW=172.24.200.1
-export DHCP_DNS=172.24.200.2
-export SAT_INTERFACE=sat
-export SUBNET=172.24.200.0
-export SUBNET_MASK=255.255.255.0
+export DHCP_RANGE="${SAT_CNET}.20 ${SAT_CNET}.50"
+export DHCP_GW=${SAT_CNET}.1
+export DHCP_DNS=${SAT_CNET}.2
+export SAT_INTERFACE=eth1
 export SUBNET_NAME='kvmnet'
-export SUBNET_IPAM_BEGIN=172.24.200.100
-export SUBNET_IPAM_END=172.24.200.150
+export SUBNET_IPAM_BEGIN=${SAT_CNET}.100
+export SUBNET_IPAM_END=${SAT_CNET}.150
 # The host prefix is used to distinguish the demo hosts created at the end of this script.
 export HOST_PREFIX='kvm-'
 # This is the default password used in hostgroup declarations.
@@ -127,15 +129,15 @@ export HOST_PASSWORD='Geheim!!'
 
 
 export PREPARE_CAPSULE=true
-export CAPSULE_NAME=capsule.example.com
-export CAPSULE_LOC="Orion"
+export CAPSULE_NAME=pu-cap.lunetix.org
+export CAPSULE_LOC="Puck"
 longcapsulename=$(echo $CAPSULE_NAME | tr '.' '_')
 
 
 # This demo is intended to run on a simple libvirt/KVM hypervisor.
 # A dedicated server hosted by an internet service provider may be a cost effective choice for this ressource.
 export CONFIGURE_LIBVIRT_RESOURCE=true
-export COMPUTE_RES_FQDN="kvm.hoster.com"
+export COMPUTE_RES_FQDN="orion1318.server4you.de"
 export COMPUTE_RES_NAME="KVM"
 
 # This script alternatively allows to use a RHV virtualization backend using the following parameters
@@ -172,15 +174,20 @@ if [ $STAGE -le 1 ]; then
         --enable=rhel-server-rhscl-7-rpms \
         --enable=rhel-7-server-optional-rpms \
         --enable=rhel-7-server-satellite-6.5-rpms \
-        --enable=rhel-7-server-satellite-6.5-puppet4-rpms
+        --enable=rhel-7-server-satellite-maintenance-6-rpms \
+        --enable=rhel-7-server-ansible-2.6-rpms
+
+    subscription-manager release --unset
+    yum install -y screen yum-utils vim
+
     rpm -Uvh https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm || true
     yum-config-manager --disable epel
-    yum -y upgrade
-    yum install -y screen yum-utils vim
-    echo "${SAT_IP} $(hostname)" >>/etc/hosts
 
+    yum -y upgrade
+
+    echo "${SAT_IP} $(hostname)" >>/etc/hosts
     yum install -y ipa-client ipa-admintools
-    ipa-client-install --server=$IPA_SERVER --domain=$DOMAIN --realm=$REALM
+    ipa-client-install --server=$IPA_SERVER --domain=$DOMAIN --realm=$REALM --ip-address=${SAT_IP}
     kinit admin@${REALM}
     ipa service-add HTTP/$(hostname)
     if [ $IPA_EXT_CERT = 'true' ]; then
@@ -226,8 +233,7 @@ EOF
         katello-certs-check \
           -b /etc/ipa/ca.crt \
           -k /root/certs/key.pem \
-          -c /root/certs/${longname}.crt \
-          -r /root/certs/${longname}.csr
+          -c /root/certs/${longname}.crt
         CERT_ARGS="--certs-server-ca-cert=/etc/ipa/ca.crt \
                --certs-server-key=/root/certs/key.pem \
                --certs-server-cert=/root/certs/${longname}.crt \
@@ -235,7 +241,8 @@ EOF
     fi
 
     if [ $FIRST_SATELLITE = 'true' ]; then
-        foreman-prepare-realm admin realm-proxy
+        foreman-prepare-realm admin ${REALM_PROXY_USER}
+        mv freeipa.keytab /root/freeipa.keytab
     elif [ ! -f /root/freeipa.keytab ]; then
         read -p "
 
@@ -277,7 +284,7 @@ EOF
       --foreman-proxy-puppetca=true ${CERT_ARGS} \
       --foreman-proxy-realm=true \
       --foreman-proxy-realm-keytab=/etc/foreman-proxy/freeipa.keytab \
-      --foreman-proxy-realm-principal="realm-proxy@${REALM}" \
+      --foreman-proxy-realm-principal="${REALM_PROXY_USER}@${REALM}" \
       --foreman-proxy-realm-provider=freeipa \
       --foreman-ipa-authentication=true \
       --enable-foreman-plugin-openscap
@@ -286,7 +293,7 @@ EOF
     hammer capsule refresh-features --id=1
     hammer settings set --name default_download_policy --value on_demand
     hammer subscription upload --organization "$ORG" --file /tmp/${MANIFEST}
-    hammer subscription refresh-manifest --organization "$ORG"
+    # hammer subscription refresh-manifest --organization "$ORG"
     yum install -y puppet-foreman_scap_client
     yum install -y foreman-discovery-image
     foreman-rake foreman_openscap:bulk_upload:default
