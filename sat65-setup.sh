@@ -68,7 +68,7 @@ export MANIFEST=Satellite_65_Generated_July_16_2019.zip
 # 5 = content views
 # 6 = host groups, activation keys, sc_params
 # 7 = hosts
-export STAGE=2
+export STAGE=6
 
 # This demo setup is built with IPA integration as one important feature to show.
 # While it is possible to use IPA and leave Satellite with the self signed internal CA cert,
@@ -77,22 +77,51 @@ export STAGE=2
 export IPA_EXT_CERT=true
 
 
-# The following four switches allow to adjust the size of the content stack synced into Satellite.
-# Depending on the use cases you want to show, RHEL6_CONTENT may well be excluded. This saves a lot of space and time.
-#
-# The OPT_CONTENT includes additional stuff like RHEL supplementary repos as well as JBoss EAP, Satellite and Capsule repos.
-# It is recommended to include this options content because it is required in all of the more advanced use cases.
-#
-# The extended content set may be omitted.
-# It servers mainly as template for even more advanced use cases to be implemented in an PoC.
-#
-# The custom content set finally is exactly that. It is intended to include your own or the customers internal stuff.
-export RHEL6_CONTENT=false
-export OPT_CONTENT=true
-export EXT_CONTENT=false
-export CUST_CONTENT=true
+
+# Product / Repo List and Mapping
+# CSV Fields:
+# Index ; Priority ; CV-Mapping ; Repo-Name ; Prod-Name ; Prod-Family ; Architecture ; Release-Version
+
+# Priority selects products based on a decimal encoded bit matrix. Essential
+# content has assigned priority bit 1. All additional product selections are
+# triggered by the appropriate bits in the priority value.
+
+
+ESSENTIAL_CONTENT=1
+RHEL8_CONTENT=2
+RHEL7_CONTENT=4
+RHEL6_CONTENT=8
+MISC_CONTENT=16
+OPT_CONTENT=32
+JBOSS_CONTENT=64
+EXT_CONTENT=128
+OSCP_CONTENT=256
+
+
+export CONTENT_MASK=$((ESSENTIAL_CONTENT + RHEL6_CONTENT + RHEL7_CONTENT + RHEL8_CONTENT + MISC_CONTENT + OPT_CONTENT + JBOSS_CONTENT + EXT_CONTENT + OSCP_CONTENT))
+
+export CUST_CONTENT='true'
 export CUSTOM_REPO_HOST=sol.lunetix.org
 export CUSTOM_REPO_IP=85.25.159.110
+
+# CV-Mapping assigns products to Content Views based on a decimal encoded bit matrix.
+
+export CV_RHEL7_Base=1
+export CV_inf_capsule=2
+export CV_inf_ipa_rhel7=4
+export CV_inf_hypervisor_rhel7=8
+export CV_inf_builder_rhel7=16
+export CV_inf_oscp_rhel7=32
+export CV_inf_docker_rhel7=64
+export CV_inf_eap_rhel7=64
+export CV_inf_git_rhel7=256
+export CV_RHEL6_Base=512
+export CV_RHEL8_Base=1024
+export CV_RHEL8_Ext=2048
+export CV_puppet_fasttrack=4096
+
+CV_array=(RHEL7-Base inf-capsule inf-ipa-rhel7 inf-hypervisor-rhel7 inf-oscp-rhel7 inf-docker-rhel7 inf-eap-rhel7 inf-git-rhel7 RHEL6-Base RHEL8-Base RHEL8-Ext)
+
 
 # The following block of parameters needs to reflect your environment.
 # Most of the parameters are used with the satellite-installer
@@ -317,28 +346,190 @@ EOF
 fi
 # END installation
 
+# BEGIN environment setup
+if [ $STAGE -le 3 ]; then
+    hammer lifecycle-environment create --organization "$ORG" --description 'Development' --name 'Development' --label development --prior Library
+    hammer lifecycle-environment create --organization "$ORG" --description 'Test' --name 'Test' --label test --prior 'Development'
+    hammer lifecycle-environment create --organization "$ORG" --description 'Production' --name 'Production' --label production --prior 'Test'
+    hammer lifecycle-environment create --organization "$ORG" --description 'Latest packages without staging' --name 'UnStaged' --label unstaged --prior Library
+
+    hammer domain update --id 1 --organizations "$ORG" --locations "$LOC"
+
+    hammer subnet create --name $SUBNET_NAME \
+      --network $SUBNET \
+      --mask $SUBNET_MASK \
+      --gateway $DHCP_GW \
+      --dns-primary $DHCP_DNS \
+      --ipam 'Internal DB' \
+      --from $SUBNET_IPAM_BEGIN \
+      --to $SUBNET_IPAM_END \
+      --tftp-id 1 \
+      --dhcp-id 1 \
+      --dns-id 1 \
+      --domain-ids 1 \
+      --organizations "$ORG" \
+      --locations "$LOC"
+
+    if [ $CONFIGURE_LIBVIRT_RESOURCE = 'true' ]; then
+        hammer compute-resource create --organizations "$ORG" --name "$COMPUTE_RES_NAME" --locations "$LOC" --provider Libvirt --url qemu+ssh://root@${COMPUTE_RES_FQDN}/system --set-console-password false
+    fi
+
+    if [ $CONFIGURE_RHEV_RESOURCE = 'true' ]; then
+        hammer compute-resource create --name "${COMPUTE_RES_NAME}" --provider "Ovirt" --description "RHV4 Managment Server" --url "https://${COMPUTE_RES_FQDN}/ovirt-engine/api/v3" --user "${RHV_RES_USER}" --password "${RHV_RES_PASSWD}" --locations "$LOC" --organizations "$ORG" --uuid "${RHV_RES_UUID}"
+    fi
+
+    cat >kickstart-docker <<EOF
+<%#
+kind: ptable
+name: Kickstart Docker
+oses:
+- CentOS 5
+- CentOS 6
+- CentOS 7
+- Fedora 16
+- Fedora 17
+- Fedora 18
+- Fedora 19
+- Fedora 20
+- RedHat 5
+- RedHat 6
+- RedHat 7
+%>
+zerombr
+clearpart --all --initlabel
+
+part  /boot     --asprimary  --size=1024
+part  swap                             --size=1024
+part  pv.01     --asprimary  --size=12000 --grow
+
+volgroup dockerhost pv.01
+logvol / --vgname=dockerhost --size=9000 --name=rootvol
+EOF
+    hammer partition-table create  --file=kickstart-docker --name='Kickstart Docker' --os-family='Redhat' --organizations="$ORG" --locations="$LOC"
+    hammer os update --title 'RedHat 7.5' --partition-tables='Kickstart default','Kickstart Docker'
+fi
+# END environment setup
+
+# BEGIN content view creation
+if [ $STAGE -le 4 ]; then
+    date
+    hammer content-view create --organization "$ORG" --name 'RHEL7-Base' --label rhel7-base --description 'Core Build for RHEL 7'
+    hammer content-view create --organization "$ORG" --name 'RHEL8-Base' --label rhel8-base --description 'Core Build for RHEL 8'
+    hammer content-view create --organization "$ORG" --name 'RHEL8-Ext' --label rhel8-ext --description 'Extended Build for RHEL 8'
+    if [ $PREPARE_CAPSULE = 'true' ]; then
+        hammer content-view create --organization "$ORG" --name 'inf-capsule' --label inf-capsule --description 'Satellite Capsule'
+    fi
+
+    hammer content-view create --organization "$ORG" --name 'inf-ipa-rhel7' --label inf-ipa-rhel7 --description ''
+    hammer content-view create --organization "$ORG" --name 'inf-eap-rhel7' --label inf-ipa-rhel7 --description ''
+    hammer content-view create --organization "$ORG" --name 'inf-hypervisor-rhel7' --label inf-hypervisor-rhel7 --description ''
+    hammer content-view create --organization "$ORG" --name 'inf-builder-rhel7' --label inf-builder-rhel7 --description ''
+    hammer content-view create --organization "$ORG" --name 'inf-oscp-rhel7' --label inf-oscp-rhel7 --description ''
+    hammer content-view create --organization "$ORG" --name 'inf-docker-rhel7' --label inf-docker-rhel7 --description ''
+    hammer content-view create --organization "$ORG" --name 'puppet-fasttrack' --label puppet-fasttrack --description 'Puppet only CV for fast module development workflow'
+    hammer content-view create --organization "$ORG" --name 'inf-git-rhel7' --label inf-git-rhel7 --description ''
+    if [ $RHEL6_CONTENT = 'true' ]; then
+        hammer content-view create --organization "$ORG" --name 'RHEL6-Base' --label rhel6-base --description 'Core Build for RHEL 6'
+    fi
+fi
+# END content view setup
+
+IFS=';'
+function init_repo {
+	index=$1
+	prio_map=$2
+	cv_map=$3
+	repo_name=$4
+	prod_name=$5
+	product=$6
+	arch=$7
+	releasever=$8
+	policy=$9
+	priority=${10}
+	
+	include='true'
+	for bit in 1 2 4 8 16 32 64 128 256 512 1024 2048 4096
+	do
+		map_mask=$(( prio_map & bit ))
+		prio_mask=$(( priority & bit ))
+		if [ $map_mask -gt 0 -a $prio_mask -eq 0 ]
+		then
+		        include='false'
+		fi
+		
+	done
+	if [ $include = 'true' ]
+	then
+		if [ ${releasever} != '000' ]
+		then
+		    release_opt="--releasever=${releasever}"
+		else
+		    release_opt=""
+		fi
+    		hammer repository-set enable --organization "$ORG" --product "${product}" --basearch="${arch}" ${release_opt} --name "${prod_name}"
+    		hammer repository update --organization "$ORG" --product "${product}" --name "${repo_name}" --download-policy "${policy}"
+    		time hammer repository synchronize --organization "$ORG" --product "${product}"  --name  "${repo_name}"
+		for index in ${!CV_array[*]}
+		do
+		    bit=$((2^index))
+		    if [ $(( prio_map & bit )) -gt 0 ]
+			then
+        		    hammer content-view add-repository --organization "$ORG" --name "${CV_array[$index]}" --product "${product}" --repository "${repo_name}"
+		    fi
+		done
+	else
+	    echo Excluded in prio $priority: $prio_map [$index] $repo_name
+	fi
+
+
+}
+
 
 # BEGIN content sync
 # Sync of Red Hat RPM packages adds up to ~160GB of disk space in /var and takes ~ 24hours to finish
-if [ $STAGE -le 3 ]; then
+if [ $STAGE -le 5 ]; then
     date
-    # Essential RHEL7 Content
-    hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='7.5' --name 'Red Hat Enterprise Linux 7 Server (Kickstart)' 
-    hammer repository update --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --name 'Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.5' --download-policy immediate
-    time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.5' 2>/dev/null
-    # 5099P, 3.73G, 28 min
-    hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='7Server' --name 'Red Hat Enterprise Linux 7 Server (RPMs)'    
-    time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server' 2>/dev/null
-    # 20120P, 27.3G, 127 min
-    hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --name 'Red Hat Satellite Tools 6.5 (for RHEL 7 Server) (RPMs)'
-    time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Satellite Tools 6.5 for RHEL 7 Server RPMs x86_64'
-    # 69P, 7.25MB, 50 sec
-    hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --name 'Red Hat Satellite Tools 6.5 - Puppet 4 (for RHEL 7 Server) (RPMs)'
-    time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Satellite Tools 6.5 - Puppet 4 for RHEL 7 Server RPMs x86_64'
-    # 1P 26MB 60s
-    hammer repository-set enable --organization "$ORG" --product 'Red Hat Software Collections for RHEL Server' --basearch='x86_64' --releasever='7Server' --name 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server'
-    time hammer repository synchronize --organization "$ORG" --product 'Red Hat Software Collections for RHEL Server'  --name  'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server' 2>/dev/null
-    # 9956P, 9.35G, 48 min
+
+while read -r line
+do
+	IFS=';' echo init_repo $line 5 
+done <<EOF
+1;68;0;JBoss Enterprise Application Platform 6 RHEL 7 Server RPMs x86_64 7Server;JBoss Enterprise Application Platform 6 (RHEL 7 Server) (RPMs);JBoss Enterprise Application Platform;x86_64;7Server;on_demand
+2;68;64;JBoss Enterprise Application Platform 7 RHEL 7 Server RPMs x86_64 7Server;JBoss Enterprise Application Platform 7 (RHEL 7 Server) (RPMs);JBoss Enterprise Application Platform;x86_64;7Server;on_demand
+3;36;0;Red Hat Ceph Storage Installer 1.3 for Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server;Red Hat Ceph Storage Installer 1.3 for Red Hat Enterprise Linux 7 Server (RPMs);Red Hat Ceph Storage;x86_64;7Server;on_demand
+4;36;0;Red Hat Ceph Storage Tools 1.3 for Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server;Red Hat Ceph Storage Tools 1.3 for Red Hat Enterprise Linux 7 Server (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;on_demand
+5;136;0;Red Hat Enterprise Linux 6 Server - Extras RPMs x86_64;Red Hat Enterprise Linux 6 Server - Extras (RPMs);Red Hat Enterprise Linux Server;x86_64;000;immediate
+6;9;512;Red Hat Enterprise Linux 6 Server Kickstart x86_64 6.9;Red Hat Enterprise Linux 6 Server (Kickstart);Red Hat Enterprise Linux Server;x86_64;6.9;immediate
+7;40;0;Red Hat Enterprise Linux 6 Server - Optional RPMs x86_64 6Server;Red Hat Enterprise Linux 6 Server - Optional (RPMs);Red Hat Enterprise Linux Server;x86_64;6Server;immediate
+8;136;0;Red Hat Enterprise Linux 6 Server - RH Common RPMs x86_64 6Server;Red Hat Enterprise Linux 6 Server - RH Common (RPMs);Red Hat Enterprise Linux Server;x86_64;6Server;on_demand
+9;9;512;Red Hat Enterprise Linux 6 Server RPMs x86_64 6Server;Red Hat Enterprise Linux 6 Server (RPMs);Red Hat Enterprise Linux Server;x86_64;6Server;immediate
+10;40;0;Red Hat Enterprise Linux 6 Server - Supplementary RPMs x86_64 6Server;Red Hat Enterprise Linux 6 Server - Supplementary (RPMs);Red Hat Enterprise Linux Server;x86_64;6Server;on_demand
+11;132;0;Red Hat Enterprise Linux 7 Server - Extras RPMs x86_64;Red Hat Enterprise Linux 7 Server - Extras (RPMs);Red Hat Enterprise Linux Server;x86_64;000;on_demand
+12;5;512;Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.5;Red Hat Enterprise Linux 7 Server (Kickstart);Red Hat Enterprise Linux Server;x86_64;7.5;immediate
+13;292;178;Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server;Red Hat Enterprise Linux 7 Server - Optional (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;on_demand
+14;36;16;Red Hat Enterprise Linux 7 Server - RH Common RPMs x86_64 7Server;Red Hat Enterprise Linux 7 Server - RH Common (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;on_demand
+15;5;511;Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server;Red Hat Enterprise Linux 7 Server (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;immediate
+16;36;16;Red Hat Enterprise Linux 7 Server - Supplementary RPMs x86_64 7Server;Red Hat Enterprise Linux 7 Server - Supplementary (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;on_demand
+17;260;32;Red Hat Enterprise Linux Atomic Host RPMs x86_64;Red Hat Enterprise Linux Atomic Host (RPMs);Red Hat Enterprise Linux Atomic Host;x86_64;000;on_demand
+18;260;32;Red Hat OpenShift Container Platform 3.9 RPMs x86_64;Red Hat OpenShift Container Platform 3.9 (RPMs);Red Hat OpenShift Container Platform;x86_64;000;on_demand
+19;516;0;Red Hat OpenStack Platform 8 director for RHEL 7 RPMs x86_64 7Server;Red Hat OpenStack Platform 8 director for RHEL 7 (RPMs);Red Hat OpenStack;x86_64;7Server;on_demand
+20;516;0;Red Hat OpenStack Platform 8 for RHEL 7 RPMs x86_64 7Server;Red Hat OpenStack Platform 8 for RHEL 7 (RPMs);Red Hat OpenStack;x86_64;7Server;on_demand
+21;516;0;Red Hat OpenStack Platform 8 Operational Tools for RHEL 7 RPMs x86_64 7Server;Red Hat OpenStack Platform 8 Operational Tools for RHEL 7 (RPMs);Red Hat OpenStack;x86_64;7Server;on_demand
+22;516;0;Red Hat OpenStack Tools 7.0 for Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server;Red Hat OpenStack Tools 7.0 for Red Hat Enterprise Linux 7 Server (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;on_demand
+23;5;2;Red Hat Satellite 6.5 for RHEL 7 Server RPMs x86_64;Red Hat Satellite 6.5 (for RHEL 7 Server) (RPMs);Red Hat Satellite;x86_64;000;immediate
+24;5;2;Red Hat Satellite Capsule 6.5 for RHEL 7 Server RPMs x86_64;Red Hat Satellite Capsule 6.5 (for RHEL 7 Server) (RPMs);Red Hat Satellite Capsule;x86_64;000;immediate
+25;5;2;Red Hat Satellite Maintenance 6 for RHEL 7 Server RPMs x86_64;Red Hat Satellite Maintenance 6 (for RHEL 7 Server) (RPMs);Red Hat Enterprise Linux Server;x86_64;000;immediate
+26;9;512;Red Hat Satellite Tools 6.5 for RHEL 6 Server RPMs x86_64;Red Hat Satellite Tools 6.5 (for RHEL 6 Server) (RPMs);Red Hat Enterprise Linux Server;x86_64;000;immediate
+27;5;511;Red Hat Satellite Tools 6.5 for RHEL 7 Server RPMs x86_64;Red Hat Satellite Tools 6.5 (for RHEL 7 Server) (RPMs);Red Hat Enterprise Linux Server;x86_64;000;immediate
+28;9;512;Red Hat Ansible Engine 2.6 for RHEL 7 Server RPMs x86_64;Red Hat Ansible Engine 2.6 (for RHEL 7 Server) (RPMs);Red Hat Enterprise Linux Server;x86_64;000;immediate
+29;5;511;Red Hat Satellite Tools 6.3 - Puppet 4 for RHEL 7 Server RPMs x86_64;Red Hat Satellite Tools 6.3 - Puppet 4 (for RHEL 7 Server) (RPMs);Red Hat Enterprise Linux Server;x86_64;000;immediate
+30;9;0;Red Hat Software Collections RPMs for Red Hat Enterprise Linux 6 Server x86_64 6Server;Red Hat Software Collections RPMs for Red Hat Enterprise Linux 6 Server;Red Hat Software Collections (for RHEL Server);x86_64;6Server;on_demand
+31;5;438;Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server;Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server;Red Hat Software Collections (for RHEL Server);x86_64;7Server;on_demand
+32;132;0;Red Hat Storage Native Client for RHEL 7 RPMs x86_64 7Server;Red Hat Storage Native Client for RHEL 7 (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;on_demand
+33;132;0;Red Hat Virtualization 4 Management Agents for RHEL 7 RPMs x86_64 7Server;Red Hat Virtualization 4 Management Agents for RHEL 7 (RPMs);Red Hat Virtualization;x86_64;7Server;on_demand
+34;1028;0;Red Hat Virtualization Host 7 RPMs x86_64;Red Hat Virtualization Host 7 (RPMs);Red Hat Virtualization Host;x86_64;000;on_demand
+35;1028;0;Red Hat Virtualization Manager 4.0 RHEL 7 Server RPMs x86_64;Red Hat Virtualization Manager 4.0 (RHEL 7 Server) (RPMs);Red Hat Virtualization;x86_64;000;on_demand
+EOF
 
     hammer product create --name='Puppet Forge' --organization "$ORG"
     hammer repository create  --organization "$ORG" --name='Modules' --product='Puppet Forge' --content-type='puppet' --publish-via-http=true --url=http://forge.puppetlabs.com/
@@ -349,56 +540,6 @@ if [ $STAGE -le 3 ]; then
     date
     df -h
 
-    # Essential RHEL6 Content
-    if [ $RHEL6_CONTENT = 'true' ]; then
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='6.9' --name 'Red Hat Enterprise Linux 6 Server (Kickstart)' 
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 6 Server Kickstart x86_64 6.9' 2>/dev/null
-        # 3852P 3.32G 45 min
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='6Server' --name 'Red Hat Enterprise Linux 6 Server (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 6 Server RPMs x86_64 6Server' 2>/dev/null
-        # 18119P, 32.2G, 320 min
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --name 'Red Hat Satellite Tools 6.5 (for RHEL 6 Server) (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Satellite Tools 6.5 for RHEL 6 Server RPMs x86_64'
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --name 'Red Hat Satellite Tools 6.5 - Puppet 4 (for RHEL 6 Server) (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Satellite Tools 6.5 - Puppet 4 for RHEL 6 Server RPMs x86_64'
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Software Collections for RHEL Server' --basearch='x86_64' --releasever='6Server' --name 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 6 Server'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Software Collections for RHEL Server'  --name  'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 6 Server x86_64 6Server' 2>/dev/null
-        # 5945P, 5.27G, 82 min
-        date
-        df -h
-    fi
-
-    if [ $OPT_CONTENT = 'true' ]; then
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --name 'Red Hat Enterprise Linux 7 Server - Extras (RPMs)'    
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 7 Server - Extras RPMs x86_64' 2>/dev/null
-        # 282P, 630M, 7 min
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='7Server' --name 'Red Hat Enterprise Linux 7 Server - Optional (RPMs)'    
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server' 2>/dev/null
-        # 8763P, 11.5G, 120 min
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='7Server' --name 'Red Hat Enterprise Linux 7 Server - RH Common (RPMs)'    
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 7 Server - RH Common RPMs x86_64 7Server' 2>/dev/null
-        # 135P, 4.47G, 14 min
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='7Server' --name 'Red Hat Enterprise Linux 7 Server - Supplementary (RPMs)'    
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 7 Server - Supplementary RPMs x86_64 7Server' 2>/dev/null
-        # 129P, 3.18G, 10 min
-        hammer repository-set enable --organization "$ORG" --product 'JBoss Enterprise Application Platform' --basearch='x86_64' --releasever='7Server' --name 'JBoss Enterprise Application Platform 7 (RHEL 7 Server) (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'JBoss Enterprise Application Platform'  --name  'JBoss Enterprise Application Platform 7 RHEL 7 Server RPMs x86_64 7Server' 2>/dev/null
-        # 
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Virtualization' --basearch='x86_64' --releasever='7Server' --name 'Red Hat Virtualization 4 Management Agents for RHEL 7 (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Virtualization'  --name  'Red Hat Virtualization 4 Management Agents for RHEL 7 RPMs x86_64 7Server' 2>/dev/null
-        # 1047P, 27.9G, 7min
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Satellite' --basearch='x86_64' --name 'Red Hat Satellite 6.5 (for RHEL 7 Server) (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Satellite'  --name  'Red Hat Satellite 6.5 for RHEL 7 Server RPMs x86_64' 2>/dev/null
-        # 302P, 420M, 3 min
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Satellite Capsule' --basearch='x86_64' --name 'Red Hat Satellite Capsule 6.5 (for RHEL 7 Server) (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Satellite Capsule'  --name  'Red Hat Satellite Capsule 6.5 for RHEL 7 Server RPMs x86_64' 2>/dev/null
-        # 6P, 517k, 1min
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Satellite Capsule' --basearch='x86_64' --name 'Red Hat Satellite Capsule 6.5 - Puppet 4 (for RHEL 7 Server) (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Satellite Capsule'  --name  'Red Hat Satellite Capsule 6.5 - Puppet 4 for RHEL 7 Server RPMs x86_64' 2>/dev/null
-        # 3P, 517k, 1min
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat OpenShift Container Platform' --basearch='x86_64' --name 'Red Hat OpenShift Container Platform 3.9 (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat OpenShift Container Platform'  --name  'Red Hat OpenShift Container Platform 3.9 RPMs x86_64' 2>/dev/null
-        # 524P, 1.23G, 4 min
         wget https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-7Server
         hammer gpg create --organization "$ORG" --name 'GPG-EPEL7' --key RPM-GPG-KEY-EPEL-7Server
         hammer product create --name='EPEL' --organization "$ORG"
@@ -407,57 +548,6 @@ if [ $STAGE -le 3 ]; then
         # 12513P, 13.3G, 87 min
 
 
-        if [ $RHEL6_CONTENT = 'true' ]; then
-            hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --name 'Red Hat Enterprise Linux 6 Server - Extras (RPMs)'    
-            time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 6 Server - Extras RPMs x86_64' 2>/dev/null
-            hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='6Server' --name 'Red Hat Enterprise Linux 6 Server - Optional (RPMs)'    
-            time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 6 Server - Optional RPMs x86_64 6Server' 2>/dev/null
-            # 10135P, 19.3G, 180 min
-            hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='6Server' --name 'Red Hat Enterprise Linux 6 Server - Supplementary (RPMs)'    
-            time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 6 Server - Supplementary RPMs x86_64 6Server' 2>/dev/null
-            # 297P, 4.2G, 12 min
-            hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='6Server' --name 'Red Hat Enterprise Linux 6 Server - RH Common (RPMs)'    
-            time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Enterprise Linux 6 Server - RH Common RPMs x86_64 6Server' 2>/dev/null
-        fi
-        date
-        df -h
-    fi
-    if [ $EXT_CONTENT = 'true' ]; then
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='7Server' --name 'Red Hat Ceph Storage Tools 1.3 for Red Hat Enterprise Linux 7 Server (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Ceph Storage Tools 1.3 for Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server' 2>/dev/null
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='7Server' --name 'Red Hat Storage Native Client for RHEL 7 (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat Storage Native Client for RHEL 7 RPMs x86_64 7Server' 2>/dev/null
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Ceph Storage' --basearch='x86_64' --releasever='7Server' --name 'Red Hat Ceph Storage Installer 1.3 for Red Hat Enterprise Linux 7 Server (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Ceph Storage'  --name  'Red Hat Ceph Storage Installer 1.3 for Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server' 2>/dev/null
-
-
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat OpenStack' --basearch='x86_64' --releasever='7Server' --name 'Red Hat OpenStack Platform 8 Operational Tools for RHEL 7 (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat OpenStack'  --name  'Red Hat OpenStack Platform 8 Operational Tools for RHEL 7 RPMs x86_64 7Server' 2>/dev/null
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat OpenStack' --basearch='x86_64' --releasever='7Server' --name 'Red Hat OpenStack Platform 8 director for RHEL 7 (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat OpenStack'  --name  'Red Hat OpenStack Platform 8 director for RHEL 7 RPMs x86_64 7Server' 2>/dev/null
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat OpenStack' --basearch='x86_64' --releasever='7Server' --name 'Red Hat OpenStack Platform 8 for RHEL 7 (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat OpenStack'  --name  'Red Hat OpenStack Platform 8 for RHEL 7 RPMs x86_64 7Server' 2>/dev/null
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Server' --basearch='x86_64' --releasever='7Server' --name 'Red Hat OpenStack Tools 7.0 for Red Hat Enterprise Linux 7 Server (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Server'  --name  'Red Hat OpenStack Tools 7.0 for Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server' 2>/dev/null
-
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Virtualization Host' --basearch='x86_64' --name 'Red Hat Virtualization Host 7 (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Virtualization Host'  --name  'Red Hat Virtualization Host 7 RPMs x86_64' 2>/dev/null
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Virtualization' --basearch='x86_64' --name 'Red Hat Virtualization Manager 4.0 (RHEL 7 Server) (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Virtualization'  --name  'Red Hat Virtualization Manager 4.0 RHEL 7 Server RPMs x86_64' 2>/dev/null
-
-        hammer repository-set enable --organization "$ORG" --product 'Red Hat Enterprise Linux Atomic Host' --basearch='x86_64' --name 'Red Hat Enterprise Linux Atomic Host (RPMs)'
-        time hammer repository synchronize --organization "$ORG" --product 'Red Hat Enterprise Linux Atomic Host'  --name  'Red Hat Enterprise Linux Atomic Host RPMs x86_64' 2>/dev/null
-
-        # hammer repository-set enable --organization "$ORG" --product '' --basearch='x86_64' --releasever='7Server' --name ''
-        # time hammer repository synchronize --organization "$ORG" --product ''  --name  '' 2>/dev/null
-
-        if [ $RHEL6_CONTENT = 'true' ]; then
-            hammer repository-set enable --organization "$ORG" --product 'JBoss Enterprise Application Platform' --basearch='x86_64' --releasever='7Server' --name 'JBoss Enterprise Application Platform 6 (RHEL 7 Server) (RPMs)'
-            time hammer repository synchronize --organization "$ORG" --product 'JBoss Enterprise Application Platform'  --name  'JBoss Enterprise Application Platform 6 RHEL 7 Server RPMs x86_64 7Server' 2>/dev/null
-        fi
-        date
-        df -h
-    fi
     if [ $CUST_CONTENT = 'true' ]; then
 	echo "$CUSTOM_REPO_IP	$CUSTOM_REPO_HOST" >>/etc/hosts
         hammer product create --name="$ORG" --organization "$ORG"
@@ -544,78 +634,9 @@ EOF
 fi
 # END content sync
 
-# BEGIN environment setup
-if [ $STAGE -le 4 ]; then
-    hammer lifecycle-environment create --organization "$ORG" --description 'Development' --name 'Development' --label development --prior Library
-    hammer lifecycle-environment create --organization "$ORG" --description 'Test' --name 'Test' --label test --prior 'Development'
-    hammer lifecycle-environment create --organization "$ORG" --description 'Production' --name 'Production' --label production --prior 'Test'
-    hammer lifecycle-environment create --organization "$ORG" --description 'Latest packages without staging' --name 'UnStaged' --label unstaged --prior Library
-
-    hammer domain update --id 1 --organizations "$ORG" --locations "$LOC"
-
-    hammer subnet create --name $SUBNET_NAME \
-      --network $SUBNET \
-      --mask $SUBNET_MASK \
-      --gateway $DHCP_GW \
-      --dns-primary $DHCP_DNS \
-      --ipam 'Internal DB' \
-      --from $SUBNET_IPAM_BEGIN \
-      --to $SUBNET_IPAM_END \
-      --tftp-id 1 \
-      --dhcp-id 1 \
-      --dns-id 1 \
-      --domain-ids 1 \
-      --organizations "$ORG" \
-      --locations "$LOC"
-
-    if [ $CONFIGURE_LIBVIRT_RESOURCE = 'true' ]; then
-        hammer compute-resource create --organizations "$ORG" --name "$COMPUTE_RES_NAME" --locations "$LOC" --provider Libvirt --url qemu+ssh://root@${COMPUTE_RES_FQDN}/system --set-console-password false
-    fi
-
-    if [ $CONFIGURE_RHEV_RESOURCE = 'true' ]; then
-        hammer compute-resource create --name "${COMPUTE_RES_NAME}" --provider "Ovirt" --description "RHV4 Managment Server" --url "https://${COMPUTE_RES_FQDN}/ovirt-engine/api/v3" --user "${RHV_RES_USER}" --password "${RHV_RES_PASSWD}" --locations "$LOC" --organizations "$ORG" --uuid "${RHV_RES_UUID}"
-    fi
-
-    cat >kickstart-docker <<EOF
-<%#
-kind: ptable
-name: Kickstart Docker
-oses:
-- CentOS 5
-- CentOS 6
-- CentOS 7
-- Fedora 16
-- Fedora 17
-- Fedora 18
-- Fedora 19
-- Fedora 20
-- RedHat 5
-- RedHat 6
-- RedHat 7
-%>
-zerombr
-clearpart --all --initlabel
-
-part  /boot     --asprimary  --size=1024
-part  swap                             --size=1024
-part  pv.01     --asprimary  --size=12000 --grow
-
-volgroup dockerhost pv.01
-logvol / --vgname=dockerhost --size=9000 --name=rootvol
-EOF
-    hammer partition-table create  --file=kickstart-docker --name='Kickstart Docker' --os-family='Redhat' --organizations="$ORG" --locations="$LOC"
-    hammer os update --title 'RedHat 7.5' --partition-tables='Kickstart default','Kickstart Docker'
-fi
-# END environment setup
-
-# BEGIN content view setup
-if [ $STAGE -le 5 ]; then
+# BEGIN content view loading
+if [ $STAGE -le 6 ]; then
     date
-    hammer content-view create --organization "$ORG" --name 'RHEL7_Base' --label rhel7_base --description 'Core Build for RHEL 7'
-    hammer content-view add-repository --organization "$ORG" --name 'RHEL7_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'RHEL7_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.5'
-    hammer content-view add-repository --organization "$ORG" --name 'RHEL7_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 for RHEL 7 Server RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'RHEL7_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 - Puppet 4 for RHEL 7 Server RPMs x86_64'
     hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author puppetlabs --name concat
     hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author puppetlabs --name ntp
@@ -624,14 +645,6 @@ if [ $STAGE -le 5 ]; then
     time hammer content-view version promote --organization "$ORG" --content-view RHEL7_Base --to-lifecycle-environment UnStaged  2>/dev/null
 
     if [ $PREPARE_CAPSULE = 'true' ]; then
-        hammer content-view create --organization "$ORG" --name 'inf-capsule' --label inf-capsule --description 'Satellite Capsule'
-        hammer content-view add-repository --organization "$ORG" --name 'inf-capsule' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-        hammer content-view add-repository --organization "$ORG" --name 'inf-capsule' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.5'
-        hammer content-view add-repository --organization "$ORG" --name 'inf-capsule' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 for RHEL 7 Server RPMs x86_64'
-        hammer content-view add-repository --organization "$ORG" --name 'inf-capsule' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server'
-        hammer content-view add-repository --organization "$ORG" --name 'inf-capsule' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
-        hammer content-view add-repository --organization "$ORG" --name 'inf-capsule' --product 'Red Hat Satellite Capsule' --repository 'Red Hat Satellite Capsule 6.5 for RHEL 7 Server RPMs x86_64'
-        hammer content-view add-repository --organization "$ORG" --name 'inf-capsule' --product 'Red Hat Satellite Capsule' --repository 'Red Hat Satellite Capsule 6.5 - Puppet 4 for RHEL 7 Server RPMs x86_64'
         hammer content-view puppet-module add --organization "$ORG" --content-view inf-capsule --author puppetlabs --name stdlib
         hammer content-view puppet-module add --organization "$ORG" --content-view inf-capsule --author puppetlabs --name concat
         hammer content-view puppet-module add --organization "$ORG" --content-view inf-capsule --author puppetlabs --name ntp
@@ -640,13 +653,6 @@ if [ $STAGE -le 5 ]; then
         time hammer content-view version promote --organization "$ORG" --content-view inf-capsule --to-lifecycle-environment UnStaged  2>/dev/null
     fi
 
-    hammer content-view create --organization "$ORG" --name 'inf-ipa-rhel7' --label inf-ipa-rhel7 --description ''
-    hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.5'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 for RHEL 7 Server RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 - Puppet 4 for RHEL 7 Server RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'EPEL' --repository 'EPEL 7 - x86_64'
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author puppetlabs --name concat
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author puppetlabs --name ntp
@@ -657,32 +663,12 @@ if [ $STAGE -le 5 ]; then
     time hammer content-view publish --organization "$ORG" --name inf-ipa-rhel7 --description 'Initial Publishing' 2>/dev/null
     time hammer content-view version promote --organization "$ORG" --content-view inf-ipa-rhel7 --to-lifecycle-environment UnStaged  2>/dev/null
 
-    hammer content-view create --organization "$ORG" --name 'inf-hypervisor-rhel7' --label inf-hypervisor-rhel7 --description ''
-    hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 for RHEL 7 Server RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 - Puppet 4 for RHEL 7 Server RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-hypervisor-rhel7' --product 'Red Hat Virtualization' --repository 'Red Hat Virtualization 4 Management Agents for RHEL 7 RPMs x86_64 7Server'
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-hypervisor-rhel7 --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-hypervisor-rhel7 --author puppetlabs --name concat
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-hypervisor-rhel7 --author puppetlabs --name ntp
     time hammer content-view publish --organization "$ORG" --name inf-hypervisor-rhel7 --description 'Initial Publishing' 2>/dev/null
     time hammer content-view version promote --organization "$ORG" --content-view inf-hypervisor-rhel7 --to-lifecycle-environment UnStaged  2>/dev/null
 
-    hammer content-view create --organization "$ORG" --name 'inf-builder-rhel7' --label inf-builder-rhel7 --description ''
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.5'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 for RHEL 7 Server RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 - Puppet 4 for RHEL 7 Server RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Supplementary RPMs x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - RH Common RPMs x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Extras RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'JBoss Enterprise Application Platform' --repository 'JBoss Enterprise Application Platform 7 RHEL 7 Server RPMs x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Maven' --repository 'Maven 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'EPEL' --repository 'EPEL 7 - x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product "$ORG" --repository "Packages"
-    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product "$ORG" --repository "Jenkins"
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name concat
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name ntp
@@ -696,14 +682,6 @@ if [ $STAGE -le 5 ]; then
     time hammer content-view publish --organization "$ORG" --name inf-builder-rhel7 --description 'Initial Publishing'
     time hammer content-view version promote --organization "$ORG" --content-view inf-builder-rhel7 --to-lifecycle-environment UnStaged
 
-    hammer content-view create --organization "$ORG" --name 'inf-oscp-rhel7' --label inf-oscp-rhel7 --description ''
-    hammer content-view add-repository --organization "$ORG" --name 'inf-oscp-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-oscp-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 for RHEL 7 Server RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-oscp-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 - Puppet 4 for RHEL 7 Server RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-oscp-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-oscp-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-oscp-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Extras RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-oscp-rhel7' --product 'Red Hat OpenShift Container Platform' --repository 'Red Hat OpenShift Container Platform 3.9 RPMs x86_64'
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-oscp-rhel7 --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-oscp-rhel7 --author puppetlabs --name concat
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-oscp-rhel7 --author puppetlabs --name ntp
@@ -716,15 +694,6 @@ if [ $STAGE -le 5 ]; then
     time hammer content-view publish --organization "$ORG" --name inf-oscp-rhel7 --description 'Initial Publishing'
     time hammer content-view version promote --organization "$ORG" --content-view inf-oscp-rhel7 --to-lifecycle-environment UnStaged
 
-    hammer content-view create --organization "$ORG" --name 'inf-docker-rhel7' --label inf-docker-rhel7 --description ''
-    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 for RHEL 7 Server RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 - Puppet 4 for RHEL 7 Server RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server - Extras RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'Red Hat OpenShift Container Platform' --repository 'Red Hat OpenShift Container Platform 3.9 RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-docker-rhel7' --product 'JBoss Enterprise Application Platform' --repository 'JBoss Enterprise Application Platform 7 RHEL 7 Server RPMs x86_64 7Server'
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author puppetlabs --name concat
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author puppetlabs --name ntp
@@ -757,12 +726,6 @@ if [ $STAGE -le 5 ]; then
     time hammer content-view publish --organization "$ORG" --name puppet-fasttrack --description 'Initial Publishing'
     time hammer content-view version promote --organization "$ORG" --content-view puppet-fasttrack --to-lifecycle-environment UnStaged
 
-    hammer content-view create --organization "$ORG" --name 'inf-git-rhel7' --label inf-git-rhel7 --description ''
-    hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 for RHEL 7 Server RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 - Puppet 4 for RHEL 7 Server RPMs x86_64'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'Red Hat Software Collections for RHEL Server' --repository 'Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server'
-    hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'EPEL' --repository 'EPEL 7 - x86_64'
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name concat
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name ntp
@@ -775,10 +738,6 @@ if [ $STAGE -le 5 ]; then
     time hammer content-view version promote --organization "$ORG" --content-view inf-git-rhel7 --to-lifecycle-environment UnStaged
 
     if [ $RHEL6_CONTENT = 'true' ]; then
-        hammer content-view create --organization "$ORG" --name 'RHEL6_Base' --label rhel6_base --description 'Core Build for RHEL 6'
-        hammer content-view add-repository --organization "$ORG" --name 'RHEL6_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 6 Server RPMs x86_64 6Server'
-        hammer content-view add-repository --organization "$ORG" --name 'RHEL6_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 for RHEL 6 Server RPMs x86_64'
-        hammer content-view add-repository --organization "$ORG" --name 'RHEL6_Base' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 - Puppet 4 for RHEL 6 Server RPMs x86_64'
         hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author puppetlabs --name stdlib
         hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author puppetlabs --name concat
         hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author puppetlabs --name ntp
@@ -788,22 +747,12 @@ if [ $STAGE -le 5 ]; then
     fi
 
 
-    # hammer content-view create --organization "$ORG" --name 'CV' --label CV --description ''
-    # hammer content-view add-repository --organization "$ORG" --name 'CV' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server'
-    # hammer content-view add-repository --organization "$ORG" --name 'CV' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 for RHEL 7 Server RPMs x86_64'
-    # hammer content-view add-repository --organization "$ORG" --name 'CV' --product 'Red Hat Enterprise Linux Server' --repository 'Red Hat Satellite Tools 6.5 - Puppet 4 for RHEL 7 Server RPMs x86_64'
-    # hammer content-view puppet-module add --organization "$ORG" --content-view CV --author puppetlabs --name stdlib
-    # hammer content-view puppet-module add --organization "$ORG" --content-view CV --author puppetlabs --name concat
-    # hammer content-view puppet-module add --organization "$ORG" --content-view CV --author puppetlabs --name ntp
-    # hammer content-view puppet-module add --organization "$ORG" --content-view CV --author saz --name ssh
-    # time hammer content-view publish --organization "$ORG" --name CV --description 'Initial Publishing' 2>/dev/null
-    # time hammer content-view version promote --organization "$ORG" --content-view CV --to-lifecycle-environment UnStaged  2>/dev/null
-    
 fi
 # END content view setup
 
+
 # BEGIN activation key and hostgroup setup
-if [ $STAGE -le 6 ]; then
+if [ $STAGE -le 7 ]; then
     PuppetForge_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Puppet Forge' | tail -n+2 | head -n1 | cut -d',' -f1)
     EPEL_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='EPEL' | tail -n+2 | head -n1 | cut -d',' -f1)
     ORG_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search="$ORG" | tail -n+2 | head -n1 | cut -d',' -f1)
