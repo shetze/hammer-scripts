@@ -68,7 +68,7 @@ export MANIFEST=Satellite_65_Generated_July_16_2019.zip
 # 5 = content views
 # 6 = host groups, activation keys, sc_params
 # 7 = hosts
-export STAGE=6
+export STAGE=1
 
 # This demo setup is built with IPA integration as one important feature to show.
 # While it is possible to use IPA and leave Satellite with the self signed internal CA cert,
@@ -106,21 +106,21 @@ export CUSTOM_REPO_IP=85.25.159.110
 
 # CV-Mapping assigns products to Content Views based on a decimal encoded bit matrix.
 
-export CV_RHEL7_Base=1
-export CV_inf_capsule=2
-export CV_inf_ipa_rhel7=4
-export CV_inf_hypervisor_rhel7=8
-export CV_inf_builder_rhel7=16
-export CV_inf_oscp_rhel7=32
-export CV_inf_docker_rhel7=64
-export CV_inf_eap_rhel7=64
-export CV_inf_git_rhel7=256
-export CV_RHEL6_Base=512
-export CV_RHEL8_Base=1024
-export CV_RHEL8_Ext=2048
-export CV_puppet_fasttrack=4096
+# CV_RHEL7_Base=1
+# CV_inf_capsule=2
+# CV_inf_ipa_rhel7=4
+# CV_inf_hypervisor_rhel7=8
+# CV_inf_builder_rhel7=16
+# CV_inf_oscp_rhel7=32
+# CV_inf_docker_rhel7=64
+# CV_inf_eap_rhel7=64
+# CV_inf_git_rhel7=256
+# CV_RHEL6_Base=512
+# CV_RHEL8_Base=1024
+# CV_RHEL8_Ext=2048
+# CV_puppet_fasttrack=4096
 
-CV_array=(RHEL7-Base inf-capsule inf-ipa-rhel7 inf-hypervisor-rhel7 inf-oscp-rhel7 inf-docker-rhel7 inf-eap-rhel7 inf-git-rhel7 RHEL6-Base RHEL8-Base RHEL8-Ext)
+CV_array=(RHEL7-Base inf-capsule inf-ipa-rhel7 inf-hypervisor-rhel7 inf-oscp-rhel7 inf-docker-rhel7 inf-eap-rhel7 inf-git-rhel7 RHEL6-Base RHEL8-Base RHEL8-Ext puppet-fasttrack)
 
 
 # The following block of parameters needs to reflect your environment.
@@ -406,31 +406,17 @@ volgroup dockerhost pv.01
 logvol / --vgname=dockerhost --size=9000 --name=rootvol
 EOF
     hammer partition-table create  --file=kickstart-docker --name='Kickstart Docker' --os-family='Redhat' --organizations="$ORG" --locations="$LOC"
-    hammer os update --title 'RedHat 7.5' --partition-tables='Kickstart default','Kickstart Docker'
+    hammer os update --title 'RedHat 7.7' --partition-tables='Kickstart default','Kickstart Docker'
 fi
 # END environment setup
 
 # BEGIN content view creation
 if [ $STAGE -le 4 ]; then
-    date
-    hammer content-view create --organization "$ORG" --name 'RHEL7-Base' --label rhel7-base --description 'Core Build for RHEL 7'
-    hammer content-view create --organization "$ORG" --name 'RHEL8-Base' --label rhel8-base --description 'Core Build for RHEL 8'
-    hammer content-view create --organization "$ORG" --name 'RHEL8-Ext' --label rhel8-ext --description 'Extended Build for RHEL 8'
-    if [ $PREPARE_CAPSULE = 'true' ]; then
-        hammer content-view create --organization "$ORG" --name 'inf-capsule' --label inf-capsule --description 'Satellite Capsule'
-    fi
-
-    hammer content-view create --organization "$ORG" --name 'inf-ipa-rhel7' --label inf-ipa-rhel7 --description ''
-    hammer content-view create --organization "$ORG" --name 'inf-eap-rhel7' --label inf-ipa-rhel7 --description ''
-    hammer content-view create --organization "$ORG" --name 'inf-hypervisor-rhel7' --label inf-hypervisor-rhel7 --description ''
-    hammer content-view create --organization "$ORG" --name 'inf-builder-rhel7' --label inf-builder-rhel7 --description ''
-    hammer content-view create --organization "$ORG" --name 'inf-oscp-rhel7' --label inf-oscp-rhel7 --description ''
-    hammer content-view create --organization "$ORG" --name 'inf-docker-rhel7' --label inf-docker-rhel7 --description ''
-    hammer content-view create --organization "$ORG" --name 'puppet-fasttrack' --label puppet-fasttrack --description 'Puppet only CV for fast module development workflow'
-    hammer content-view create --organization "$ORG" --name 'inf-git-rhel7' --label inf-git-rhel7 --description ''
-    if [ $RHEL6_CONTENT = 'true' ]; then
-        hammer content-view create --organization "$ORG" --name 'RHEL6-Base' --label rhel6-base --description 'Core Build for RHEL 6'
-    fi
+    for index in ${!CV_array[*]}
+    do
+        LABEL=$(echo ${CV_array[$index]} | tr '[:upper:]' '[:lower:]')
+        hammer content-view create --organization "$ORG" --name "${CV_array[$index]}" --label "$LABEL" --description "Installer Provided Content View $LABEL" 
+    done
 fi
 # END content view setup
 
@@ -490,6 +476,46 @@ function init_repo {
 if [ $STAGE -le 5 ]; then
     date
 
+    hammer product create --name='Puppet Forge' --organization "$ORG"
+    hammer repository create  --organization "$ORG" --name='Modules' --product='Puppet Forge' --content-type='puppet' --publish-via-http=true --url=http://forge.puppetlabs.com/
+    time hammer repository synchronize --organization "$ORG" --product 'Puppet Forge'  --name  'Modules' 2>/dev/null
+    # 4327P, 426M, 110 min
+    du -sh /var/lib/pulp/content/units/puppet_module
+    find /var/lib/pulp/content/units/puppet_module -name \*tar.gz|wc -l
+
+
+
+    date
+    df -h
+
+    if [ $CUST_CONTENT = 'true' ]; then
+        wget https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-7Server
+        hammer gpg create --organization "$ORG" --name 'GPG-EPEL7' --key RPM-GPG-KEY-EPEL-7Server
+        hammer product create --name='EPEL' --organization "$ORG"
+        hammer repository create  --organization "$ORG" --name='EPEL 7 - x86_64' --product='EPEL' --gpg-key='GPG-EPEL7' --content-type='yum' --publish-via-http=true --url=http://mirror.de.leaseweb.net/epel/7/x86_64/ --download-policy on_demand
+        time hammer repository synchronize --organization "$ORG" --product 'EPEL'  --name  'EPEL 7 - x86_64' 2>/dev/null
+        # 12513P, 13.3G, 87 min
+	echo "$CUSTOM_REPO_IP	$CUSTOM_REPO_HOST" >>/etc/hosts
+        hammer product create --name="$ORG" --organization "$ORG"
+        hammer repository create  --organization "$ORG" --name='Puppet Modules' --product="$ORG" --content-type='puppet' --publish-via-http=true --url=http://${CUSTOM_REPO_HOST}/repos/puppet-modules/
+        time hammer repository synchronize --organization "$ORG" --product="$ORG"  --name='Puppet Modules' 2>/dev/null
+        hammer repository create  --organization "$ORG" --name='Packages' --product="$ORG" --content-type='yum' --publish-via-http=true --url=http://${CUSTOM_REPO_HOST}/repos/${ORG}-packages/ --download-policy immediate
+        time hammer repository synchronize --organization "$ORG" --product="$ORG"  --name='Packages' 2>/dev/null
+        wget http://pkg.jenkins.io/redhat/jenkins.io.key
+        hammer gpg create --organization "$ORG" --name GPG-JENKINS --key jenkins.io.key
+        hammer repository create  --organization "$ORG" --name='Jenkins' --product="$ORG" --gpg-key='GPG-JENKINS' --content-type='yum' --publish-via-http=true --url=http://${CUSTOM_REPO_HOST}/repos/Jenkins-packages/ --download-policy immediate
+        time hammer repository synchronize --organization "$ORG" --product="$ORG"  --name='Jenkins' 2>/dev/null
+        hammer product create --name='Maven' --organization "$ORG"
+        hammer repository create  --organization "$ORG" --name='Maven 7Server' --product='Maven' --content-type='yum' --publish-via-http=true --url=https://repos.fedorapeople.org/repos/dchen/apache-maven/epel-7Server/x86_64/ --download-policy immediate
+        time hammer repository synchronize --organization "$ORG" --product='Maven'  --name='Maven 7Server' 2>/dev/null
+        wget http://packages.icinga.org/icinga.key
+        hammer gpg create --organization "$ORG" --name GPG-ICINGA --key icinga.key
+        hammer product create --name='Icinga' --organization "$ORG"
+        hammer repository create  --organization "$ORG" --name='Icinga 7Server' --product='Icinga' --content-type='yum' --gpg-key='GPG-ICINGA' --publish-via-http=true --url=http://packages.icinga.org/epel/7Server/release --download-policy immediate
+        time hammer repository synchronize --organization "$ORG" --product='Icinga'  --name='Icinga 7Server' 2>/dev/null
+        date
+        df -h
+    fi
 while read -r line
 do
 	IFS=';' echo init_repo $line 5 
@@ -505,7 +531,7 @@ done <<EOF
 9;9;512;Red Hat Enterprise Linux 6 Server RPMs x86_64 6Server;Red Hat Enterprise Linux 6 Server (RPMs);Red Hat Enterprise Linux Server;x86_64;6Server;immediate
 10;40;0;Red Hat Enterprise Linux 6 Server - Supplementary RPMs x86_64 6Server;Red Hat Enterprise Linux 6 Server - Supplementary (RPMs);Red Hat Enterprise Linux Server;x86_64;6Server;on_demand
 11;132;0;Red Hat Enterprise Linux 7 Server - Extras RPMs x86_64;Red Hat Enterprise Linux 7 Server - Extras (RPMs);Red Hat Enterprise Linux Server;x86_64;000;on_demand
-12;5;512;Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.5;Red Hat Enterprise Linux 7 Server (Kickstart);Red Hat Enterprise Linux Server;x86_64;7.5;immediate
+12;5;512;Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.7;Red Hat Enterprise Linux 7 Server (Kickstart);Red Hat Enterprise Linux Server;x86_64;7.7;immediate
 13;292;178;Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server;Red Hat Enterprise Linux 7 Server - Optional (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;on_demand
 14;36;16;Red Hat Enterprise Linux 7 Server - RH Common RPMs x86_64 7Server;Red Hat Enterprise Linux 7 Server - RH Common (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;on_demand
 15;5;511;Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server;Red Hat Enterprise Linux 7 Server (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;immediate
@@ -531,45 +557,6 @@ done <<EOF
 35;1028;0;Red Hat Virtualization Manager 4.0 RHEL 7 Server RPMs x86_64;Red Hat Virtualization Manager 4.0 (RHEL 7 Server) (RPMs);Red Hat Virtualization;x86_64;000;on_demand
 EOF
 
-    hammer product create --name='Puppet Forge' --organization "$ORG"
-    hammer repository create  --organization "$ORG" --name='Modules' --product='Puppet Forge' --content-type='puppet' --publish-via-http=true --url=http://forge.puppetlabs.com/
-    time hammer repository synchronize --organization "$ORG" --product 'Puppet Forge'  --name  'Modules' 2>/dev/null
-    # 4327P, 426M, 110 min
-    du -sh /var/lib/pulp/content/units/puppet_module
-    find /var/lib/pulp/content/units/puppet_module -name \*tar.gz|wc -l
-    date
-    df -h
-
-        wget https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-7Server
-        hammer gpg create --organization "$ORG" --name 'GPG-EPEL7' --key RPM-GPG-KEY-EPEL-7Server
-        hammer product create --name='EPEL' --organization "$ORG"
-        hammer repository create  --organization "$ORG" --name='EPEL 7 - x86_64' --product='EPEL' --gpg-key='GPG-EPEL7' --content-type='yum' --publish-via-http=true --url=http://mirror.de.leaseweb.net/epel/7/x86_64/ --download-policy on_demand
-        time hammer repository synchronize --organization "$ORG" --product 'EPEL'  --name  'EPEL 7 - x86_64' 2>/dev/null
-        # 12513P, 13.3G, 87 min
-
-
-    if [ $CUST_CONTENT = 'true' ]; then
-	echo "$CUSTOM_REPO_IP	$CUSTOM_REPO_HOST" >>/etc/hosts
-        hammer product create --name="$ORG" --organization "$ORG"
-        hammer repository create  --organization "$ORG" --name='Puppet Modules' --product="$ORG" --content-type='puppet' --publish-via-http=true --url=http://${CUSTOM_REPO_HOST}/repos/puppet-modules/
-        time hammer repository synchronize --organization "$ORG" --product="$ORG"  --name='Puppet Modules' 2>/dev/null
-        hammer repository create  --organization "$ORG" --name='Packages' --product="$ORG" --content-type='yum' --publish-via-http=true --url=http://${CUSTOM_REPO_HOST}/repos/${ORG}-packages/ --download-policy immediate
-        time hammer repository synchronize --organization "$ORG" --product="$ORG"  --name='Packages' 2>/dev/null
-        wget http://pkg.jenkins.io/redhat/jenkins.io.key
-        hammer gpg create --organization "$ORG" --name GPG-JENKINS --key jenkins.io.key
-        hammer repository create  --organization "$ORG" --name='Jenkins' --product="$ORG" --gpg-key='GPG-JENKINS' --content-type='yum' --publish-via-http=true --url=http://${CUSTOM_REPO_HOST}/repos/Jenkins-packages/ --download-policy immediate
-        time hammer repository synchronize --organization "$ORG" --product="$ORG"  --name='Jenkins' 2>/dev/null
-        hammer product create --name='Maven' --organization "$ORG"
-        hammer repository create  --organization "$ORG" --name='Maven 7Server' --product='Maven' --content-type='yum' --publish-via-http=true --url=https://repos.fedorapeople.org/repos/dchen/apache-maven/epel-7Server/x86_64/ --download-policy immediate
-        time hammer repository synchronize --organization "$ORG" --product='Maven'  --name='Maven 7Server' 2>/dev/null
-        wget http://packages.icinga.org/icinga.key
-        hammer gpg create --organization "$ORG" --name GPG-ICINGA --key icinga.key
-        hammer product create --name='Icinga' --organization "$ORG"
-        hammer repository create  --organization "$ORG" --name='Icinga 7Server' --product='Icinga' --content-type='yum' --gpg-key='GPG-ICINGA' --publish-via-http=true --url=http://packages.icinga.org/epel/7Server/release --download-policy immediate
-        time hammer repository synchronize --organization "$ORG" --product='Icinga'  --name='Icinga 7Server' 2>/dev/null
-        date
-        df -h
-    fi
     hammer sync-plan create --name "daily sync" --enabled=true --interval daily --organization $ORG --sync-date "2018-05-01 01:00:00"
     for i in $(hammer --csv product list --organization $ORG --per-page 999 | grep -vi '^ID' | grep -vi not_synced | awk -F, {'{ if ($5!=0) print $1}'})
     do
@@ -762,7 +749,7 @@ if [ $STAGE -le 7 ]; then
     OSCP_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='OpenShift Container Platform, Premium 2-Core' | tail -n+2 | head -n1 | cut -d',' -f1)
     RHEL_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat Enterprise Linux Server with Smart Management, Standard (Physical or Virtual Nodes)' | grep -v 'ATOM\|Resilient\|Hyperscale' | tail -n+2 | head -n1 | cut -d',' -f1)
 
-    hammer medium create --path=http://$(hostname)/pulp/repos/${ORG}/Library/content/dist/rhel/server/7/7.5/x86_64/kickstart/ --organizations="$ORG" --locations="$LOC" --os-family=Redhat --name="RHEL 7.5 Kickstart" --operatingsystems="RedHat 7.5"
+    hammer medium create --path=http://$(hostname)/pulp/repos/${ORG}/Library/content/dist/rhel/server/7/7.7/x86_64/kickstart/ --organizations="$ORG" --locations="$LOC" --os-family=Redhat --name="RHEL 7.7 Kickstart" --operatingsystems="RedHat 7.7"
 
     uuid=$(uuidgen)
     hammer activation-key create --organization="$ORG" --name="el7base-${uuid}" --unlimited-hosts --lifecycle-environment='UnStaged' --content-view='RHEL7_Base'
@@ -774,8 +761,8 @@ if [ $STAGE -le 7 ]; then
     hammer hostgroup create --query-organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='RHEL 7.5 Kickstart' --pxe-loader='PXELinux BIOS' \
-      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.5' --partition-table='Kickstart default' \
+      --medium='RHEL 7.7 Kickstart' --pxe-loader='PXELinux BIOS' \
+      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.7' --partition-table='Kickstart default' \
       --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='RHEL7_Base' \
       --environment="KT_${ORG}_unstaged_rhel7_base_2" --name='RHEL7_Base'
     hammer hostgroup set-parameter --hostgroup='RHEL7_Base' --name='kt_activation_keys' --value="el7base-${uuid}"
@@ -797,8 +784,8 @@ if [ $STAGE -le 7 ]; then
         hammer hostgroup create --query-organization="$ORG" --organizations="$ORG" --locations="$LOC" \
           --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
           --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-          --medium='RHEL 7.5 Kickstart' --pxe-loader='PXELinux BIOS' \
-          --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.5' --partition-table='Kickstart default' \
+          --medium='RHEL 7.7 Kickstart' --pxe-loader='PXELinux BIOS' \
+          --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.7' --partition-table='Kickstart default' \
           --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='inf-capsule' \
           --environment="${environment}" --name='inf-capsule'
         hammer hostgroup set-parameter --hostgroup='inf-capsule' --name='kt_activation_keys' --value="cap63-${uuid}"
@@ -824,8 +811,8 @@ if [ $STAGE -le 7 ]; then
     hammer hostgroup create --query-organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='RHEL 7.5 Kickstart' --pxe-loader='PXELinux BIOS' \
-      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.5' --partition-table='Kickstart default' \
+      --medium='RHEL 7.7 Kickstart' --pxe-loader='PXELinux BIOS' \
+      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.7' --partition-table='Kickstart default' \
       --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,buildhost'  --content-view='inf-builder-rhel7' \
       --environment="$environment" --name='inf-builder-rhel7'
     hammer hostgroup set-parameter --hostgroup='inf-builder-rhel7' --name='kt_activation_keys' --value='inf-builder-rhel7'
@@ -844,8 +831,8 @@ if [ $STAGE -le 7 ]; then
     hammer hostgroup create --query-organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='RHEL 7.5 Kickstart' --pxe-loader='PXELinux BIOS' \
-      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.5' --partition-table='Kickstart default' \
+      --medium='RHEL 7.7 Kickstart' --pxe-loader='PXELinux BIOS' \
+      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.7' --partition-table='Kickstart default' \
       --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='inf-hypervisor-rhel7' \
       --environment="$environment" --name='inf-hypervisor-rhel7'
     hammer hostgroup set-parameter --hostgroup='inf-hypervisor-rhel7' --name='kt_activation_keys' --value='inf-hypervisor-rhel7'
@@ -864,8 +851,8 @@ if [ $STAGE -le 7 ]; then
     hammer hostgroup create --query-organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='RHEL 7.5 Kickstart' --pxe-loader='PXELinux BIOS' \
-      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.5' --partition-table='Kickstart default' \
+      --medium='RHEL 7.7 Kickstart' --pxe-loader='PXELinux BIOS' \
+      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.7' --partition-table='Kickstart default' \
       --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,git::server'  --content-view='inf-git-rhel7' \
       --environment="$environment" --name='inf-git-rhel7'
     hammer hostgroup set-parameter --hostgroup='inf-git-rhel7' --name='kt_activation_keys' --value='inf-git-rhel7'
@@ -892,8 +879,8 @@ if [ $STAGE -le 7 ]; then
     hammer hostgroup create --query-organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='RHEL 7.5 Kickstart' --pxe-loader='PXELinux BIOS' \
-      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.5' --partition-table='Kickstart default' \
+      --medium='RHEL 7.7 Kickstart' --pxe-loader='PXELinux BIOS' \
+      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.7' --partition-table='Kickstart default' \
       --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,dockerhost'  --content-view='inf-docker-rhel7' \
       --environment="$environment" --name='inf-docker-rhel7'
     hammer hostgroup set-parameter --hostgroup='inf-docker-rhel7' --name='kt_activation_keys' --value='inf-docker-rhel7'
@@ -920,8 +907,8 @@ if [ $STAGE -le 7 ]; then
     hammer hostgroup create --query-organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='RHEL 7.5 Kickstart' --pxe-loader='PXELinux BIOS' \
-      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.5' --partition-table='Kickstart default' \
+      --medium='RHEL 7.7 Kickstart' --pxe-loader='PXELinux BIOS' \
+      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.7' --partition-table='Kickstart default' \
       --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp,oscp'  --content-view='inf-oscp-rhel7' \
       --environment="$environment" --name='inf-oscp-rhel7'
     hammer hostgroup set-parameter --hostgroup='inf-oscp-rhel7' --name='kt_activation_keys' --value='inf-oscp-rhel7'
@@ -939,8 +926,8 @@ if [ $STAGE -le 7 ]; then
     hammer hostgroup create --query-organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
-      --medium='RHEL 7.5 Kickstart' --pxe-loader='PXELinux BIOS' \
-      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.5' --partition-table='Kickstart default' \
+      --medium='RHEL 7.7 Kickstart' --pxe-loader='PXELinux BIOS' \
+      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.7' --partition-table='Kickstart default' \
       --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='inf-ipa-rhel7' \
       --partition-table='Kickstart Docker' --environment="$environment" --name='inf-ipa-rhel7'
     hammer hostgroup set-parameter --hostgroup='inf-ipa-rhel7' --name='kt_activation_keys' --value='inf-ipa-rhel7'
