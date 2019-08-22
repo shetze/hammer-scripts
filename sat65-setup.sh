@@ -92,13 +92,15 @@ RHEL8_CONTENT=2
 RHEL7_CONTENT=4
 RHEL6_CONTENT=8
 MISC_CONTENT=16
-OPT_CONTENT=32
+DEV_CONTENT=32
 JBOSS_CONTENT=64
 EXT_CONTENT=128
 OSCP_CONTENT=256
+OSE_CONTENT=512
+RHV_CONTENT=1024
 
 
-export CONTENT_MASK=$((ESSENTIAL_CONTENT + RHEL6_CONTENT + RHEL7_CONTENT + RHEL8_CONTENT + MISC_CONTENT + OPT_CONTENT + JBOSS_CONTENT + EXT_CONTENT + OSCP_CONTENT))
+export CONTENT_MASK=$((ESSENTIAL_CONTENT + RHEL6_CONTENT + RHEL7_CONTENT + RHEL8_CONTENT + MISC_CONTENT + DEV_CONTENT + JBOSS_CONTENT + EXT_CONTENT + OSCP_CONTENT + OSE_CONTENT + RHV_CONTENT))
 
 export CUST_CONTENT='true'
 export CUSTOM_REPO_HOST=sol.lunetix.org
@@ -112,15 +114,15 @@ export CUSTOM_REPO_IP=85.25.159.110
 # CV_inf_hypervisor_rhel7=8
 # CV_inf_builder_rhel7=16
 # CV_inf_oscp_rhel7=32
-# CV_inf_docker_rhel7=64
 # CV_inf_eap_rhel7=64
+# CV_inf_docker_rhel7=128
 # CV_inf_git_rhel7=256
 # CV_RHEL6_Base=512
 # CV_RHEL8_Base=1024
 # CV_RHEL8_Ext=2048
 # CV_puppet_fasttrack=4096
 
-CV_array=(RHEL7-Base inf-capsule inf-ipa-rhel7 inf-hypervisor-rhel7 inf-oscp-rhel7 inf-docker-rhel7 inf-eap-rhel7 inf-git-rhel7 RHEL6-Base RHEL8-Base RHEL8-Ext puppet-fasttrack)
+CV_array=(RHEL7-Base inf-capsule inf-ipa-rhel7 inf-hypervisor-rhel7 inf-builder-rhel7 inf-oscp-rhel7 inf-eap-rhel7 inf-docker-rhel7 inf-git-rhel7 RHEL6-Base RHEL8-Base RHEL8-Ext puppet-fasttrack)
 
 
 # The following block of parameters needs to reflect your environment.
@@ -246,7 +248,7 @@ if [ $STAGE -le 2 ]; then
 
     mkdir -p /usr/share/foreman/.ssh
     ssh-keygen -f /usr/share/foreman/.ssh/id_rsa -t rsa -N ''
-    ssh-keyscan -t ecdsa $COMPUTE_RES_NAME >/usr/share/foreman/.ssh/known_hosts
+    ssh-keyscan -t ecdsa $COMPUTE_RES_FQDN >/usr/share/foreman/.ssh/known_hosts
     chown -R foreman.foreman /usr/share/foreman/.ssh
 
     mkdir -p /root/.hammer
@@ -371,6 +373,7 @@ if [ $STAGE -le 3 ]; then
       --locations "$LOC"
 
     if [ $CONFIGURE_LIBVIRT_RESOURCE = 'true' ]; then
+	yum -y install libvirt-client
         hammer compute-resource create --organizations "$ORG" --name "$COMPUTE_RES_NAME" --locations "$LOC" --provider Libvirt --url qemu+ssh://root@${COMPUTE_RES_FQDN}/system --set-console-password false
     fi
 
@@ -420,6 +423,7 @@ if [ $STAGE -le 4 ]; then
 fi
 # END content view setup
 
+BIFS=$IFS
 IFS=';'
 function init_repo {
 	index=$1
@@ -432,7 +436,9 @@ function init_repo {
 	releasever=$8
 	policy=$9
 	priority=${10}
-	
+
+	if [[ $index == \#* ]]; then return 0; fi
+
 	include='true'
 	for bit in 1 2 4 8 16 32 64 128 256 512 1024 2048 4096
 	do
@@ -452,15 +458,15 @@ function init_repo {
 		else
 		    release_opt=""
 		fi
-    		hammer repository-set enable --organization "$ORG" --product "${product}" --basearch="${arch}" ${release_opt} --name "${prod_name}"
-    		hammer repository update --organization "$ORG" --product "${product}" --name "${repo_name}" --download-policy "${policy}"
-    		time hammer repository synchronize --organization "$ORG" --product "${product}"  --name  "${repo_name}"
-		for index in ${!CV_array[*]}
+    		echo hammer repository-set enable --organization "$ORG" --product "${product}" --basearch="${arch}" ${release_opt} --name "${prod_name}"
+    		echo hammer repository update --organization "$ORG" --product "${product}" --name "${repo_name}" --download-policy "${policy}"
+    		echo time hammer repository synchronize --organization "$ORG" --product "${product}"  --name  "${repo_name}"
+		for idx in ${!CV_array[*]}
 		do
-		    bit=$((2^index))
-		    if [ $(( prio_map & bit )) -gt 0 ]
+		    bit=$((2**idx))
+		    if [ $(( cv_map & bit )) -gt 0 ]
 			then
-        		    hammer content-view add-repository --organization "$ORG" --name "${CV_array[$index]}" --product "${product}" --repository "${repo_name}"
+        		    hammer content-view add-repository --organization "$ORG" --name "${CV_array[$idx]}" --product "${product}" --repository "${repo_name}"
 		    fi
 		done
 	else
@@ -476,6 +482,7 @@ function init_repo {
 if [ $STAGE -le 5 ]; then
     date
 
+if false; then
     hammer product create --name='Puppet Forge' --organization "$ORG"
     hammer repository create  --organization "$ORG" --name='Modules' --product='Puppet Forge' --content-type='puppet' --publish-via-http=true --url=http://forge.puppetlabs.com/
     time hammer repository synchronize --organization "$ORG" --product 'Puppet Forge'  --name  'Modules' 2>/dev/null
@@ -516,9 +523,10 @@ if [ $STAGE -le 5 ]; then
         date
         df -h
     fi
+
 while read -r line
 do
-	IFS=';' echo init_repo $line 5 
+	IFS=';' init_repo $line $CONTENT_MASK 
 done <<EOF
 1;68;0;JBoss Enterprise Application Platform 6 RHEL 7 Server RPMs x86_64 7Server;JBoss Enterprise Application Platform 6 (RHEL 7 Server) (RPMs);JBoss Enterprise Application Platform;x86_64;7Server;on_demand
 2;68;64;JBoss Enterprise Application Platform 7 RHEL 7 Server RPMs x86_64 7Server;JBoss Enterprise Application Platform 7 (RHEL 7 Server) (RPMs);JBoss Enterprise Application Platform;x86_64;7Server;on_demand
@@ -531,7 +539,7 @@ done <<EOF
 9;9;512;Red Hat Enterprise Linux 6 Server RPMs x86_64 6Server;Red Hat Enterprise Linux 6 Server (RPMs);Red Hat Enterprise Linux Server;x86_64;6Server;immediate
 10;40;0;Red Hat Enterprise Linux 6 Server - Supplementary RPMs x86_64 6Server;Red Hat Enterprise Linux 6 Server - Supplementary (RPMs);Red Hat Enterprise Linux Server;x86_64;6Server;on_demand
 11;132;0;Red Hat Enterprise Linux 7 Server - Extras RPMs x86_64;Red Hat Enterprise Linux 7 Server - Extras (RPMs);Red Hat Enterprise Linux Server;x86_64;000;on_demand
-12;5;512;Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.7;Red Hat Enterprise Linux 7 Server (Kickstart);Red Hat Enterprise Linux Server;x86_64;7.7;immediate
+12;5;511;Red Hat Enterprise Linux 7 Server Kickstart x86_64 7.7;Red Hat Enterprise Linux 7 Server (Kickstart);Red Hat Enterprise Linux Server;x86_64;7.7;immediate
 13;292;178;Red Hat Enterprise Linux 7 Server - Optional RPMs x86_64 7Server;Red Hat Enterprise Linux 7 Server - Optional (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;on_demand
 14;36;16;Red Hat Enterprise Linux 7 Server - RH Common RPMs x86_64 7Server;Red Hat Enterprise Linux 7 Server - RH Common (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;on_demand
 15;5;511;Red Hat Enterprise Linux 7 Server RPMs x86_64 7Server;Red Hat Enterprise Linux 7 Server (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;immediate
@@ -547,28 +555,38 @@ done <<EOF
 25;5;2;Red Hat Satellite Maintenance 6 for RHEL 7 Server RPMs x86_64;Red Hat Satellite Maintenance 6 (for RHEL 7 Server) (RPMs);Red Hat Enterprise Linux Server;x86_64;000;immediate
 26;9;512;Red Hat Satellite Tools 6.5 for RHEL 6 Server RPMs x86_64;Red Hat Satellite Tools 6.5 (for RHEL 6 Server) (RPMs);Red Hat Enterprise Linux Server;x86_64;000;immediate
 27;5;511;Red Hat Satellite Tools 6.5 for RHEL 7 Server RPMs x86_64;Red Hat Satellite Tools 6.5 (for RHEL 7 Server) (RPMs);Red Hat Enterprise Linux Server;x86_64;000;immediate
-28;9;512;Red Hat Ansible Engine 2.6 for RHEL 7 Server RPMs x86_64;Red Hat Ansible Engine 2.6 (for RHEL 7 Server) (RPMs);Red Hat Enterprise Linux Server;x86_64;000;immediate
+28;9;512;Red Hat Ansible Engine 2.6 RPMs for Red Hat Enterprise Linux 7 Server x86_64;Red Hat Ansible Engine 2.6 RPMs for Red Hat Enterprise Linux 7 Server;Red Hat Ansible Engine;x86_64;000;immediate
 29;5;511;Red Hat Satellite Tools 6.3 - Puppet 4 for RHEL 7 Server RPMs x86_64;Red Hat Satellite Tools 6.3 - Puppet 4 (for RHEL 7 Server) (RPMs);Red Hat Enterprise Linux Server;x86_64;000;immediate
-30;9;0;Red Hat Software Collections RPMs for Red Hat Enterprise Linux 6 Server x86_64 6Server;Red Hat Software Collections RPMs for Red Hat Enterprise Linux 6 Server;Red Hat Software Collections (for RHEL Server);x86_64;6Server;on_demand
-31;5;438;Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server;Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server;Red Hat Software Collections (for RHEL Server);x86_64;7Server;on_demand
+30;9;0;Red Hat Software Collections RPMs for Red Hat Enterprise Linux 6 Server x86_64 6Server;Red Hat Software Collections RPMs for Red Hat Enterprise Linux 6 Server;Red Hat Software Collections for RHEL Server;x86_64;6Server;on_demand
+31;5;438;Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server x86_64 7Server;Red Hat Software Collections RPMs for Red Hat Enterprise Linux 7 Server;Red Hat Software Collections for RHEL Server;x86_64;7Server;on_demand
 32;132;0;Red Hat Storage Native Client for RHEL 7 RPMs x86_64 7Server;Red Hat Storage Native Client for RHEL 7 (RPMs);Red Hat Enterprise Linux Server;x86_64;7Server;on_demand
 33;132;0;Red Hat Virtualization 4 Management Agents for RHEL 7 RPMs x86_64 7Server;Red Hat Virtualization 4 Management Agents for RHEL 7 (RPMs);Red Hat Virtualization;x86_64;7Server;on_demand
 34;1028;0;Red Hat Virtualization Host 7 RPMs x86_64;Red Hat Virtualization Host 7 (RPMs);Red Hat Virtualization Host;x86_64;000;on_demand
 35;1028;0;Red Hat Virtualization Manager 4.0 RHEL 7 Server RPMs x86_64;Red Hat Virtualization Manager 4.0 (RHEL 7 Server) (RPMs);Red Hat Virtualization;x86_64;000;on_demand
+36;3;3072;Red Hat Enterprise Linux 8 for x86_64 - BaseOS RPMs x86_64 8;Red Hat Enterprise Linux 8 for x86_64 - BaseOS (RPMs);Red Hat Enterprise Linux for x86_64;x86_64;8;immediate
+37;3;3072;Red Hat Enterprise Linux 8 for x86_64 - BaseOS Kickstart x86_64 8;Red Hat Enterprise Linux 8 for x86_64 - BaseOS (Kickstart);Red Hat Enterprise Linux for x86_64;x86_64;8;immediate
+38;3;3072;Red Hat Enterprise Linux 8 for x86_64 - AppStream RPMs x86_64 8;Red Hat Enterprise Linux 8 for x86_64 - AppStream (RPMs);Red Hat Enterprise Linux for x86_64;x86_64;8;immediate
+39;3;3072;Red Hat Enterprise Linux 8 for x86_64 - AppStream Kickstart x86_64 8;Red Hat Enterprise Linux 8 for x86_64 - AppStream (Kickstart);Red Hat Enterprise Linux for x86_64;x86_64;8;immediate
+40;3;3072;Red Hat Satellite Tools 6.5 for RHEL 8 x86_64 RPMs x86_64;Red Hat Satellite Tools 6.5 for RHEL 8 x86_64 (RPMs);Red Hat Enterprise Linux for x86_64;x86_64;000;immediate
+41;34;2048;Red Hat Enterprise Linux 8 for x86_64 - Supplementary RPMs x86_64 8;Red Hat Enterprise Linux 8 for x86_64 - Supplementary (RPMs);Red Hat Enterprise Linux for x86_64;x86_64;8;immediate
 EOF
 
-    hammer sync-plan create --name "daily sync" --enabled=true --interval daily --organization $ORG --sync-date "2018-05-01 01:00:00"
+fi
+
+IFS=$BIFS
+
+    hammer sync-plan create --name "nightly sync" --enabled=true --interval daily --organization $ORG --sync-date "2018-05-01 01:00:00"
     for i in $(hammer --csv product list --organization $ORG --per-page 999 | grep -vi '^ID' | grep -vi not_synced | awk -F, {'{ if ($5!=0) print $1}'})
     do
-      hammer product set-sync-plan --sync-plan "daily sync" --organization $ORG --id $i
+      hammer product set-sync-plan --sync-plan "nightly sync" --organization $ORG --id $i
     done
 
     export CVMANAGER_PASS=$(pwmake 64)
     hammer user create --login='cvmanager' --firstname='ContentView' --lastname='Manager' --default-location=$LOC --default-organization=$ORG --locale='de' --organizations=$ORG --locations=$LOC --timezone='Berlin' --password="$CVMANAGER_PASS" --roles='Manager' --mail="cvmanager@${DOMAIN}" --auth-source-id=1
-    yum -y install ruby-devel gcc
+    yum -y install ruby-devel gcc gcc-c++
     git clone https://github.com/RedHatSatellite/katello-cvmanager.git
     gem install apipie-bindings || true
-    echo > /root/katello-cvmanager/UnStaged.yaml <<EOF
+    cat > /root/katello-cvmanager/UnStaged.yaml <<EOF
 ---
 :settings:
   :user: cvmanager
@@ -581,7 +599,7 @@ EOF
   :promote_cvs: true
   :checkrepos: true
 :cv:
-  RHEL7_Base: latest
+  RHEL7-Base: latest
   inf-builder-rhel7: latest
   inf-docker-rhel7: latest
   inf-git-rhel7: latest
@@ -589,7 +607,7 @@ EOF
   inf-ipa-rhel7: latest
   inf-oscp-rhel7: latest
 :promote:
- - RHEL7_Base
+ - RHEL7-Base
  - inf-builder-rhel7
  - inf-docker-rhel7
  - inf-git-rhel7
@@ -597,7 +615,7 @@ EOF
  - inf-ipa-rhel7
  - inf-oscp-rhel7
 :publish:
- - RHEL7_Base
+ - RHEL7-Base
  - inf-builder-rhel7
  - inf-docker-rhel7
  - inf-git-rhel7
@@ -606,7 +624,7 @@ EOF
  - inf-oscp-rhel7
 EOF
 
-    echo > /root/katello-cvmanager/daily_updates.sh <<EOF
+    cat > /root/katello-cvmanager/daily_updates.sh <<EOF
 #! /bin/bash
 set -e
 ./cvmanager --config=UnStaged.yaml --wait publish
@@ -624,12 +642,13 @@ fi
 # BEGIN content view loading
 if [ $STAGE -le 6 ]; then
     date
-    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author puppetlabs --name stdlib
-    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author puppetlabs --name concat
-    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author puppetlabs --name ntp
-    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7_Base --author saz --name ssh
-    time hammer content-view publish --organization "$ORG" --name RHEL7_Base --description 'Initial Publishing' 2>/dev/null
-    time hammer content-view version promote --organization "$ORG" --content-view RHEL7_Base --to-lifecycle-environment UnStaged  2>/dev/null
+
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7-Base --author puppetlabs --name stdlib
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7-Base --author puppetlabs --name concat
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7-Base --author puppetlabs --name ntp
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7-Base --author saz --name ssh
+    time hammer content-view publish --organization "$ORG" --name RHEL7-Base --description 'Initial Publishing' 2>/dev/null
+    time hammer content-view version promote --organization "$ORG" --content-view RHEL7-Base --to-lifecycle-environment UnStaged  2>/dev/null
 
     if [ $PREPARE_CAPSULE = 'true' ]; then
         hammer content-view puppet-module add --organization "$ORG" --content-view inf-capsule --author puppetlabs --name stdlib
@@ -640,6 +659,7 @@ if [ $STAGE -le 6 ]; then
         time hammer content-view version promote --organization "$ORG" --content-view inf-capsule --to-lifecycle-environment UnStaged  2>/dev/null
     fi
 
+    hammer content-view add-repository --organization "$ORG" --name 'inf-ipa-rhel7' --product 'EPEL' --repository 'EPEL 7 - x86_64'
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author puppetlabs --name concat
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-ipa-rhel7 --author puppetlabs --name ntp
@@ -656,16 +676,20 @@ if [ $STAGE -le 6 ]; then
     time hammer content-view publish --organization "$ORG" --name inf-hypervisor-rhel7 --description 'Initial Publishing' 2>/dev/null
     time hammer content-view version promote --organization "$ORG" --content-view inf-hypervisor-rhel7 --to-lifecycle-environment UnStaged  2>/dev/null
 
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'Maven' --repository 'Maven 7Server'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product 'EPEL' --repository 'EPEL 7 - x86_64'
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product "$ORG" --repository "Packages"
+    hammer content-view add-repository --organization "$ORG" --name 'inf-builder-rhel7' --product "$ORG" --repository "Jenkins"
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name concat
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name ntp
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author saz --name ssh
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name postgresql
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppetlabs --name java
-    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author rtyler --name jenkins
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppet --name jenkins
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author LunetIX --name git
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author LunetIX --name buildhost
-    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author camptocamp --name archive
+    hammer content-view puppet-module add --organization "$ORG" --content-view inf-builder-rhel7 --author puppet --name archive
     time hammer content-view publish --organization "$ORG" --name inf-builder-rhel7 --description 'Initial Publishing'
     time hammer content-view version promote --organization "$ORG" --content-view inf-builder-rhel7 --to-lifecycle-environment UnStaged
 
@@ -692,18 +716,16 @@ if [ $STAGE -le 6 ]; then
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-docker-rhel7 --author LunetIX --name dockerhost
     time hammer content-view publish --organization "$ORG" --name inf-docker-rhel7 --description 'Initial Publishing'
     time hammer content-view version promote --organization "$ORG" --content-view inf-docker-rhel7 --to-lifecycle-environment UnStaged
-
-    hammer content-view create --organization "$ORG" --name 'puppet-fasttrack' --label puppet-fasttrack --description 'Puppet only CV for fast module development workflow'
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name concat
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name ntp
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author saz --name ssh
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name postgresql
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppetlabs --name java
-    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author rtyler --name jenkins
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppet --name jenkins
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author LunetIX --name git
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author LunetIX --name buildhost
-    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author camptocamp --name archive
+    hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author puppet --name archive
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author cristifalcas --name kubernetes
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author cristifalcas --name etcd
     hammer content-view puppet-module add --organization "$ORG" --content-view puppet-fasttrack --author LunetIX --name docker
@@ -713,6 +735,7 @@ if [ $STAGE -le 6 ]; then
     time hammer content-view publish --organization "$ORG" --name puppet-fasttrack --description 'Initial Publishing'
     time hammer content-view version promote --organization "$ORG" --content-view puppet-fasttrack --to-lifecycle-environment UnStaged
 
+    hammer content-view add-repository --organization "$ORG" --name 'inf-git-rhel7' --product 'EPEL' --repository 'EPEL 7 - x86_64'
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name concat
     hammer content-view puppet-module add --organization "$ORG" --content-view inf-git-rhel7 --author puppetlabs --name ntp
@@ -725,12 +748,12 @@ if [ $STAGE -le 6 ]; then
     time hammer content-view version promote --organization "$ORG" --content-view inf-git-rhel7 --to-lifecycle-environment UnStaged
 
     if [ $RHEL6_CONTENT = 'true' ]; then
-        hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author puppetlabs --name stdlib
-        hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author puppetlabs --name concat
-        hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author puppetlabs --name ntp
-        hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6_Base --author saz --name ssh
-        time hammer content-view publish --organization "$ORG" --name RHEL6_Base --description 'Initial Publishing' 2>/dev/null
-        time hammer content-view version promote --organization "$ORG" --content-view RHEL6_Base --to-lifecycle-environment UnStaged  2>/dev/null
+        hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6-Base --author puppetlabs --name stdlib
+        hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6-Base --author puppetlabs --name concat
+        hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6-Base --author puppetlabs --name ntp
+        hammer content-view puppet-module add --organization "$ORG" --content-view RHEL6-Base --author saz --name ssh
+        time hammer content-view publish --organization "$ORG" --name RHEL6-Base --description 'Initial Publishing' 2>/dev/null
+        time hammer content-view version promote --organization "$ORG" --content-view RHEL6-Base --to-lifecycle-environment UnStaged  2>/dev/null
     fi
 
 
@@ -752,21 +775,22 @@ if [ $STAGE -le 7 ]; then
     hammer medium create --path=http://$(hostname)/pulp/repos/${ORG}/Library/content/dist/rhel/server/7/7.7/x86_64/kickstart/ --organizations="$ORG" --locations="$LOC" --os-family=Redhat --name="RHEL 7.7 Kickstart" --operatingsystems="RedHat 7.7"
 
     uuid=$(uuidgen)
-    hammer activation-key create --organization="$ORG" --name="el7base-${uuid}" --unlimited-hosts --lifecycle-environment='UnStaged' --content-view='RHEL7_Base'
+    hammer activation-key create --organization="$ORG" --name="el7base-${uuid}" --unlimited-hosts --lifecycle-environment='UnStaged' --content-view='RHEL7-Base'
     hammer activation-key add-subscription --organization="$ORG" --name="el7base-${uuid}" --subscription-id="$PuppetForge_Sub_ID" 
     hammer activation-key add-subscription --organization="$ORG" --name="el7base-${uuid}" --subscription-id="$RHEL_Sub_ID" 
     hammer activation-key content-override --organization="$ORG" --name="el7base-${uuid}" --content-label='rhel-7-server-satellite-tools-6.5-rpms' --value=1
     hammer activation-key content-override --organization="$ORG" --name="el7base-${uuid}" --content-label='rhel-7-server-satellite-tools-6.5-puppet4-rpms' --value=1
     hammer activation-key update --organization="$ORG" --name="el7base-${uuid}" --release-version='7Server' --service-level='Standard' --auto-attach=0
+    environment=$(hammer --output=csv environment list --search='unstaged_rhel7_base' | tail -n+2 | head -n1 | cut -d',' -f2)
     hammer hostgroup create --query-organization="$ORG" --organizations="$ORG" --locations="$LOC" \
       --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
       --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
       --medium='RHEL 7.7 Kickstart' --pxe-loader='PXELinux BIOS' \
       --lifecycle-environment='UnStaged' --operatingsystem='RedHat 7.7' --partition-table='Kickstart default' \
-      --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='RHEL7_Base' \
-      --environment="KT_${ORG}_unstaged_rhel7_base_2" --name='RHEL7_Base'
-    hammer hostgroup set-parameter --hostgroup='RHEL7_Base' --name='kt_activation_keys' --value="el7base-${uuid}"
-    hammer hostgroup set-parameter --hostgroup='RHEL7_Base' --name='enable-puppet4' --value='true'
+      --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='RHEL7-Base' \
+      --environment="${environment}" --name='RHEL7-Base'
+    hammer hostgroup set-parameter --hostgroup='RHEL7-Base' --name='kt_activation_keys' --value="el7base-${uuid}"
+    hammer hostgroup set-parameter --hostgroup='RHEL7-Base' --name='enable-puppet4' --value='true'
 
     if [ $PREPARE_CAPSULE = 'true' ]; then
         CAPSULE_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat Satellite Capsule Server' | tail -n+2 | head -n1 | cut -d',' -f1)
@@ -1033,7 +1057,7 @@ Manual action required!
 # echo "DEFROUTE=no" >>/etc/sysconfig/network-scripts/ifcfg-eth0
 # systemctl restart network
 
-hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$COMPUTE_RES_NAME" --compute-profile='1-Small' --hostgroup='RHEL7_Base' --name="${HOST_PREFIX}-rhel7std01"
+hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$COMPUTE_RES_NAME" --compute-profile='1-Small' --hostgroup='RHEL7-Base' --name="${HOST_PREFIX}-rhel7std01"
 hammer host start --name="${HOST_PREFIX}-rhel7std01.${DOMAIN}"
 hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$COMPUTE_RES_NAME" --compute-profile='2-Medium' --hostgroup='inf-git-rhel7' --name="${HOST_PREFIX}-git"
 hammer host start --name="${HOST_PREFIX}-git.${DOMAIN}"
