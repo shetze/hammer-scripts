@@ -150,9 +150,9 @@ export DHCP_RANGE="${SAT_CNET}.20 ${SAT_CNET}.50"
 export DHCP_GW=${SAT_CNET}.1
 export DHCP_DNS=${SAT_CNET}.2
 export SAT_INTERFACE=eth1
-export SUBNET_NAME='kvmnet'
 export SUBNET_IPAM_BEGIN=${SAT_CNET}.100
 export SUBNET_IPAM_END=${SAT_CNET}.150
+export SUBNET_NAME='kvmnet'
 # The host prefix is used to distinguish the demo hosts created at the end of this script.
 export HOST_PREFIX='kvm-'
 # This is the default password used in hostgroup declarations.
@@ -496,9 +496,16 @@ if false; then
     df -h
 
     if [ $CUST_CONTENT = 'true' ]; then
+
+	wget https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-8
+        hammer gpg create --organization "$ORG" --name 'GPG-EPEL8' --key RPM-GPG-KEY-EPEL-8
+        hammer product create --name='EPEL' --organization "$ORG"
+        hammer repository create  --organization "$ORG" --name='EPEL 8 - x86_64' --product='EPEL' --gpg-key='GPG-EPEL8' --content-type='yum' --publish-via-http=true --url=http://mirror.de.leaseweb.net/epel/8/Everything/x86_64/ --download-policy immediate
+        time hammer repository synchronize --organization "$ORG" --product 'EPEL'  --name  'EPEL 8 - x86_64' 2>/dev/null
+        # 12513P, 13.3G, 87 min
+
         wget https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-7Server
         hammer gpg create --organization "$ORG" --name 'GPG-EPEL7' --key RPM-GPG-KEY-EPEL-7Server
-        hammer product create --name='EPEL' --organization "$ORG"
         hammer repository create  --organization "$ORG" --name='EPEL 7 - x86_64' --product='EPEL' --gpg-key='GPG-EPEL7' --content-type='yum' --publish-via-http=true --url=http://mirror.de.leaseweb.net/epel/7/x86_64/ --download-policy on_demand
         time hammer repository synchronize --organization "$ORG" --product 'EPEL'  --name  'EPEL 7 - x86_64' 2>/dev/null
         # 12513P, 13.3G, 87 min
@@ -643,6 +650,21 @@ fi
 if [ $STAGE -le 6 ]; then
     date
 
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Base --author puppetlabs --name stdlib
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Base --author puppetlabs --name concat
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Base --author puppetlabs --name ntp
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Base --author saz --name ssh
+    time hammer content-view publish --organization "$ORG" --name RHEL8-Base --description 'Initial Publishing' 2>/dev/null
+    time hammer content-view version promote --organization "$ORG" --content-view RHEL8-Base --to-lifecycle-environment UnStaged  2>/dev/null
+
+    hammer content-view add-repository --organization "$ORG" --name 'RHEL8-Ext' --product 'EPEL' --repository 'EPEL 8 - x86_64'
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Ext --author puppetlabs --name stdlib
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Ext --author puppetlabs --name concat
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Ext --author puppetlabs --name ntp
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Ext --author saz --name ssh
+    time hammer content-view publish --organization "$ORG" --name RHEL8-Ext --description 'Initial Publishing' 2>/dev/null
+    time hammer content-view version promote --organization "$ORG" --content-view RHEL8-Ext --to-lifecycle-environment UnStaged  2>/dev/null
+
     hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7-Base --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7-Base --author puppetlabs --name concat
     hammer content-view puppet-module add --organization "$ORG" --content-view RHEL7-Base --author puppetlabs --name ntp
@@ -772,6 +794,8 @@ if [ $STAGE -le 7 ]; then
     OSCP_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='OpenShift Container Platform, Premium 2-Core' | tail -n+2 | head -n1 | cut -d',' -f1)
     RHEL_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat Enterprise Linux Server with Smart Management, Standard (Physical or Virtual Nodes)' | grep -v 'ATOM\|Resilient\|Hyperscale' | tail -n+2 | head -n1 | cut -d',' -f1)
 
+    hammer medium create --path=http://$(hostname)/pulp/repos/${ORG}/Library/content/dist/rhel8/8/x86_64/baseos/kickstart/ --organizations="$ORG" --locations="$LOC" --os-family=Redhat --name="RHEL 8.0 Kickstart" --operatingsystems="RedHat 8.0"
+    hammer medium create --path=http://$(hostname)/pulp/repos/${ORG}/Library/content/dist/rhel8/8/x86_64/appstream/kickstart/ --organizations="$ORG" --locations="$LOC" --os-family=Redhat --name="RHEL 8.0 Appstream Kickstart" --operatingsystems="RedHat 8.0"
     hammer medium create --path=http://$(hostname)/pulp/repos/${ORG}/Library/content/dist/rhel/server/7/7.7/x86_64/kickstart/ --organizations="$ORG" --locations="$LOC" --os-family=Redhat --name="RHEL 7.7 Kickstart" --operatingsystems="RedHat 7.7"
 
     uuid=$(uuidgen)
@@ -791,6 +815,23 @@ if [ $STAGE -le 7 ]; then
       --environment="${environment}" --name='RHEL7-Base'
     hammer hostgroup set-parameter --hostgroup='RHEL7-Base' --name='kt_activation_keys' --value="el7base-${uuid}"
     hammer hostgroup set-parameter --hostgroup='RHEL7-Base' --name='enable-puppet4' --value='true'
+
+    uuid=$(uuidgen)
+    hammer activation-key create --organization="$ORG" --name="el8base-${uuid}" --unlimited-hosts --lifecycle-environment='UnStaged' --content-view='RHEL8-Base'
+    hammer activation-key add-subscription --organization="$ORG" --name="el8base-${uuid}" --subscription-id="$PuppetForge_Sub_ID" 
+    hammer activation-key add-subscription --organization="$ORG" --name="el8base-${uuid}" --subscription-id="$RHEL_Sub_ID" 
+    hammer activation-key content-override --organization="$ORG" --name="el8base-${uuid}" --content-label='satellite-tools-6.5-for-rhel-8-x86_64-rpms' --value=1
+    hammer activation-key update --organization="$ORG" --name="el8base-${uuid}" --release-version='8' --service-level='Standard' --auto-attach=0
+    environment=$(hammer --output=csv environment list --search='unstaged_rhel8_base' | tail -n+2 | head -n1 | cut -d',' -f2)
+    hammer hostgroup create --query-organization="$ORG" --organizations="$ORG" --locations="$LOC" \
+      --architecture='x86_64' --content-source-id=1 --puppet-ca-proxy-id=1 --puppet-proxy-id=1 \
+      --domain="$DOMAIN" --realm="$REALM" --subnet="$SUBNET_NAME" \
+      --medium='RHEL 8.0 Kickstart'  --pxe-loader='PXELinux BIOS' \
+      --lifecycle-environment='UnStaged' --operatingsystem='RedHat 8.0' --partition-table='Kickstart default' \
+      --root-pass="$HOST_PASSWORD" --puppet-classes='ssh::server,ntp'  --content-view='RHEL8-Base' \
+      --environment="${environment}" --name='RHEL8-Base'
+    hammer hostgroup set-parameter --hostgroup='RHEL8-Base' --name='kt_activation_keys' --value="el8base-${uuid}"
+    hammer hostgroup set-parameter --hostgroup='RHEL8-Base' --name='enable-puppet4' --value='true'
 
     if [ $PREPARE_CAPSULE = 'true' ]; then
         CAPSULE_Sub_ID=$(hammer --output='csv' subscription list --organization=$ORG --search='Red Hat Satellite Capsule Server' | tail -n+2 | head -n1 | cut -d',' -f1)
@@ -1056,6 +1097,9 @@ Manual action required!
 # sed -ri 's/^ONBOOT=no/ONBOOT=yes/' /etc/sysconfig/network-scripts/ifcfg-eth1
 # echo "DEFROUTE=no" >>/etc/sysconfig/network-scripts/ifcfg-eth0
 # systemctl restart network
+
+hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$COMPUTE_RES_NAME" --compute-profile='2-Medium' --hostgroup='RHEL8-Base' --name="${HOST_PREFIX}-rhel8std01"
+hammer host start --name="${HOST_PREFIX}-rhel8std01.${DOMAIN}"
 
 hammer host create --organization="$ORG" --location="$LOC" --compute-resource="$COMPUTE_RES_NAME" --compute-profile='1-Small' --hostgroup='RHEL7-Base' --name="${HOST_PREFIX}-rhel7std01"
 hammer host start --name="${HOST_PREFIX}-rhel7std01.${DOMAIN}"
