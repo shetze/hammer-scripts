@@ -47,14 +47,14 @@ Read through the values carefully and change where appropriate.
 When finished, delete or comment the following exit command.
 
 EOF
-# exit 0
+exit 0
 
 set -x
 set -e
 longname=$(hostname | tr '.' '_')
 
 # This is a Sat6 engineering manifest. Replace with your custom manifest.
-export MANIFEST=Satellite_65_Generated_July_16_2019.zip
+export MANIFEST=/tmp/Satellite_65_Generated_July_16_2019.zip
 # scp Satellite_65_Generated_July_16_2019.zip root@satellite65.example.com:/tmp
 # scp sat65-setup.sh root@satellite65.example.com:
 
@@ -63,11 +63,12 @@ export MANIFEST=Satellite_65_Generated_July_16_2019.zip
 # STAGE Level:
 # 1 = preqequisite preparation
 # 2 = Satellite 6 installation
-# 3 = content sync
-# 4 = environment setup
-# 5 = content views
-# 6 = host groups, activation keys, sc_params
-# 7 = hosts
+# 3 = environment setup
+# 4 = basic content view creation
+# 5 = content sync
+# 6 = content view customizing and promotion
+# 7 = activation key, hostgroup setup, sc_params
+# 8 = creation of example hosts
 export STAGE=1
 
 # This demo setup is built with IPA integration as one important feature to show.
@@ -323,7 +324,7 @@ EOF
     service foreman-proxy restart
     hammer capsule refresh-features --id=1
     hammer settings set --name default_download_policy --value on_demand
-    hammer subscription upload --organization "$ORG" --file /tmp/${MANIFEST}
+    hammer subscription upload --organization "$ORG" --file ${MANIFEST}
     # hammer subscription refresh-manifest --organization "$ORG"
     yum install -y puppet-foreman_scap_client
     yum install -y foreman-discovery-image
@@ -413,7 +414,7 @@ EOF
 fi
 # END environment setup
 
-# BEGIN content view creation
+# BEGIN basic content view creation
 if [ $STAGE -le 4 ]; then
     for index in ${!CV_array[*]}
     do
@@ -458,9 +459,9 @@ function init_repo {
 		else
 		    release_opt=""
 		fi
-    		echo hammer repository-set enable --organization "$ORG" --product "${product}" --basearch="${arch}" ${release_opt} --name "${prod_name}"
-    		echo hammer repository update --organization "$ORG" --product "${product}" --name "${repo_name}" --download-policy "${policy}"
-    		echo time hammer repository synchronize --organization "$ORG" --product "${product}"  --name  "${repo_name}"
+    		hammer repository-set enable --organization "$ORG" --product "${product}" --basearch="${arch}" ${release_opt} --name "${prod_name}"
+    		hammer repository update --organization "$ORG" --product "${product}" --name "${repo_name}" --download-policy "${policy}"
+    		time hammer repository synchronize --organization "$ORG" --product "${product}"  --name  "${repo_name}"
 		for idx in ${!CV_array[*]}
 		do
 		    bit=$((2**idx))
@@ -646,13 +647,13 @@ EOF
 fi
 # END content sync
 
-# BEGIN content view loading
+# BEGIN content view customizing and promotion
 if [ $STAGE -le 6 ]; then
     date
 
     hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Base --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Base --author puppetlabs --name concat
-    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Base --author puppetlabs --name ntp
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Base --author drzewiec --name chrony
     hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Base --author saz --name ssh
     time hammer content-view publish --organization "$ORG" --name RHEL8-Base --description 'Initial Publishing' 2>/dev/null
     time hammer content-view version promote --organization "$ORG" --content-view RHEL8-Base --to-lifecycle-environment UnStaged  2>/dev/null
@@ -660,7 +661,7 @@ if [ $STAGE -le 6 ]; then
     hammer content-view add-repository --organization "$ORG" --name 'RHEL8-Ext' --product 'EPEL' --repository 'EPEL 8 - x86_64'
     hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Ext --author puppetlabs --name stdlib
     hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Ext --author puppetlabs --name concat
-    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Ext --author puppetlabs --name ntp
+    hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Ext --author drzewiec --name chrony
     hammer content-view puppet-module add --organization "$ORG" --content-view RHEL8-Ext --author saz --name ssh
     time hammer content-view publish --organization "$ORG" --name RHEL8-Ext --description 'Initial Publishing' 2>/dev/null
     time hammer content-view version promote --organization "$ORG" --content-view RHEL8-Ext --to-lifecycle-environment UnStaged  2>/dev/null
