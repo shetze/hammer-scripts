@@ -200,6 +200,7 @@ EOF
                --certs-server-key=${CUST_CERT_KEY} \
                --certs-server-cert=${CUST_CERT} \
                --certs-server-cert-req=${CUST_CERT_CSR}"
+        cp ${CUST_CA_CERT} /etc/pki/ca-trust/source/anchors/
     fi
     if [ $IPA_EXT_CERT = 'true' ]; then
         katello-certs-check \
@@ -212,7 +213,6 @@ EOF
                --certs-server-cert-req=/root/certs/${longname}.csr"
     fi
 
-    cp ${CUST_CA_CERT} /etc/pki/ca-trust/source/anchors/
     update-ca-trust enable
     update-ca-trust
 
@@ -227,9 +227,6 @@ EOF
     hammer settings set --name default_download_policy --value on_demand
     hammer subscription upload --organization "$ORG" --file ${MANIFEST}
     hammer subscription refresh-manifest --organization "$ORG"
-    yum install -y puppet-foreman_scap_client
-    # foreman-rake foreman_openscap:bulk_upload:default
-
 fi
 # END installation
 
